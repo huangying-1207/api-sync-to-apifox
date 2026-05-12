@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "if": "Bash(git commit *)",
+        "hooks": [
+          {
+            "type": "agent",
+            "prompt": "The user is about to run a git commit. Check whether CLAUDE.md needs to be updated to reflect the staged changes. Steps: 1) Read the current CLAUDE.md. 2) Run 'git diff --cached --name-only' to see which files are staged for commit. 3) If any staged changes affect architecture, commands, dependencies, or conventions documented in CLAUDE.md, respond with exactly this JSON: {\"continue\": false, \"stopReason\": \"CLAUDE.md needs to be updated to reflect the staged changes. Please update CLAUDE.md before committing.\"} 4) If CLAUDE.md is already up to date, respond with exactly: {\"continue\": true}",
+            "timeout": 30,
+            "statusMessage": "Checking if CLAUDE.md needs updating..."
+          }
+        ]
+      }
+    ]
+  }
+}
