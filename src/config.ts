@@ -122,6 +122,16 @@ class ConfigManager {
   }
 
   /**
+   * 获取全部配置
+   */
+  getAllConfig(): Config | Record<string, any> {
+    if (!this.config) {
+      this.readConfig();
+    }
+    return this.config || {};
+  }
+
+  /**
    * 保存配置到文件
    */
   saveConfig(): void {

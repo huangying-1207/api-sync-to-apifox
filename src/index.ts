@@ -562,7 +562,11 @@ async function main(): Promise<void> {
       const connectedProjects = apifoxMCP.getConnectedProjects();
 
       if (connectedProjects.length > 0) {
-        const projectName = connectedProjects[0];
+        // Prefer the project already configured in .apifoxsync.json
+        const existingProjectName = configManager.getConfig('project-name') as string | undefined;
+        const projectName = (existingProjectName && connectedProjects.includes(existingProjectName))
+          ? existingProjectName
+          : connectedProjects[0];
         const connectionInfo = apifoxMCP.getConnectionInfo(projectName);
         initArgs['project-name'] = projectName;
         initArgs['apifox-project-id'] = connectionInfo.projectId;
@@ -573,9 +577,11 @@ async function main(): Promise<void> {
         console.warn('配置文件将使用默认值生成，apifox-project-id 和 apifox-api-key 为空');
       }
 
-      // Generate default config and merge with provided args
+      // Generate default config and merge: existing config < defaults < init args
+      // This preserves user-set values like source-path while filling in defaults for missing fields
       const defaultConfig = ConfigValidator.generateDefaultConfig();
-      const mergedConfig = { ...defaultConfig, ...initArgs };
+      const existingConfig = configManager.getAllConfig();
+      const mergedConfig = { ...defaultConfig, ...existingConfig, ...initArgs };
       configManager.setConfig('apifox-project-id', mergedConfig['apifox-project-id']);
       configManager.setConfig('apifox-api-key', mergedConfig['apifox-api-key']);
       if (mergedConfig['project-name']) configManager.setConfig('project-name', mergedConfig['project-name']);
