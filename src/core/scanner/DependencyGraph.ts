@@ -1027,7 +1027,7 @@ export class DependencyGraph {
             }
           }
           // 如果 service 方法返回类型也是黑盒，递归追踪
-          if (this.isOpaqueType(calleeMethod.returnType) && depth < maxDepth && calleeMethod.dataCalls.length > 0) {
+          if (this.isOpaqueType(calleeMethod.returnType) && depth < maxDepth) {
             const deeperRefs = this.traceCallsForDto(
               calleeClassInfo,
               calleeMethod,
@@ -1246,6 +1246,7 @@ export class DependencyGraph {
                 continue;
               }
 
+              // 检查源类型或目标类型是否受影响
               if (sourceType && this.isTypeAffected(sourceType, closure)) {
                 const sourceChange = fieldChanges.find((fc) => fc.className === sourceType);
                 if (sourceChange) {
@@ -1268,6 +1269,30 @@ export class DependencyGraph {
                   }
                 }
               }
+
+              // 反向传播：如果目标类型受影响，源类型也可能受影响（双向传播）
+              if (targetType && this.isTypeAffected(targetType, closure)) {
+                const targetChange = fieldChanges.find((fc) => fc.className === targetType);
+                if (targetChange) {
+                  const changedFields = new Set([
+                    ...targetChange.addedFields,
+                    ...targetChange.removedFields,
+                    ...targetChange.changedFields,
+                  ]);
+                  if (sourceType && this.classIndex.has(sourceType)) {
+                    const sourceClassInfo = this.classIndex.get(sourceType)!;
+                    const sourceHasMatchingFields = Object.keys(sourceClassInfo.fields).some((field) =>
+                      changedFields.has(field),
+                    );
+                    if (sourceHasMatchingFields && !closure.has(sourceType)) {
+                      console.log(`  copyProperties 传播: ${targetType} → ${sourceType}`);
+                      copyPropHitCount++;
+                      closure.add(sourceType);
+                      expanded = true;
+                    }
+                  }
+                }
+              }
             }
           }
         }
@@ -1276,6 +1301,26 @@ export class DependencyGraph {
         }
       }
     }
+
+    // 补充：检查是否有方法直接返回受影响的 DTO 类型
+    console.log('=== 补充方法返回类型检查 ===');
+    let methodReturnHitCount = 0;
+    for (const [className, classInfo] of this.classIndex) {
+      if (closure.has(className)) continue;
+      if (classInfo.isController || classInfo.isService) continue;
+
+      for (const method of classInfo.methods) {
+        if (method.returnType && this.isTypeAffected(method.returnType, closure)) {
+          console.log(`  方法返回类型传播: ${method.returnType} → ${className}`);
+          closure.add(className);
+          methodReturnHitCount++;
+        }
+      }
+    }
+    if (methodReturnHitCount > 0) {
+      console.log(`  发现 ${methodReturnHitCount} 个类通过方法返回类型传播受影响`);
+    }
+
     return closure;
   }
 
@@ -2309,7 +2354,30 @@ export class DependencyGraph {
       // 检查该变量是否在后续代码中被返回
       const afterContext = methodContent.slice(matchIndex + fullMatch.length);
       const returnPattern = new RegExp(`return\\s+${resultVar}\\s*;`);
-      flowsToReturn = returnPattern.test(afterContext);
+
+      // 情况1.1: 直接返回该变量
+      if (returnPattern.test(afterContext)) {
+        flowsToReturn = true;
+      } else {
+        // 情况1.2: 间接流向返回值，如：
+        // 变量被复制到其他对象属性，然后其他对象被转换为 JSON 并返回
+        // 或者变量被作为参数传递给其他方法，该方法返回转换后的结果
+
+        // 检查是否有 BeanUtils.copyProperties 或类似的属性复制操作
+        const copyPropertiesPattern = new RegExp(
+          `BeanUtils\\.copyProperties\\s*\\(\\s*${resultVar}\\s*,\\s*(\\w+)\\s*\\)`,
+        );
+        const copyMatch = afterContext.match(copyPropertiesPattern);
+        if (copyMatch) {
+          const targetVar = copyMatch[1];
+          const targetReturnPattern = new RegExp(
+            `return\\s+(?:\\(JSONObject\\)\\s*)?JSONObject\\.toJSON\\s*\\(\\s*${targetVar}\\s*\\)\\s*;`,
+          );
+          if (targetReturnPattern.test(afterContext)) {
+            flowsToReturn = true;
+          }
+        }
+      }
     } else {
       // 情况2: 直接作为返回值
       // 匹配模式: return (JSONObject)JSONObject.toJSON(varName);
