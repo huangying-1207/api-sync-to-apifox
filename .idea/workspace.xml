@@ -5,21 +5,8 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="76a1ba41-42a2-40ed-a370-6f3bf104fd69" name="Changes" comment="初始化项目">
-      <change beforePath="$PROJECT_DIR$/.apifox-credentials.json" beforeDir="false" afterPath="$PROJECT_DIR$/.apifox-credentials.json" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.apifoxsync.json" beforeDir="false" afterPath="$PROJECT_DIR$/.apifoxsync.json" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.claude/commands/check.md" beforeDir="false" afterPath="$PROJECT_DIR$/.claude/commands/check.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.claude/commands/dev.md" beforeDir="false" afterPath="$PROJECT_DIR$/.claude/commands/dev.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.claude/commands/scan.md" beforeDir="false" afterPath="$PROJECT_DIR$/.claude/commands/scan.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.claude/commands/sync.md" beforeDir="false" afterPath="$PROJECT_DIR$/.claude/commands/sync.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.claude/settings.json" beforeDir="false" afterPath="$PROJECT_DIR$/.claude/settings.json" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/package-lock.json" beforeDir="false" afterPath="$PROJECT_DIR$/package-lock.json" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/package.json" beforeDir="false" afterPath="$PROJECT_DIR$/package.json" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/core/scanner/ApiScanner.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/scanner/ApiScanner.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/index.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/index.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/modules/comparer.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/comparer.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/modules/formatter.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/formatter.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/modules/syncer.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/syncer.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/types/index.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/types/index.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/core/scanner/DependencyGraph.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/scanner/DependencyGraph.ts" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />

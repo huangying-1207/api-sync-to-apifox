@@ -185,6 +185,13 @@ export class ApiScanner {
       // 基于 schema 引用追踪受影响的 Controller 方法
       const affectedMethods = this.dependencyGraph.findSchemaAffectedControllers(changePoints, fieldChanges);
 
+      // 调试信息：打印完整的受影响方法列表
+      console.log('=== findSchemaAffectedControllers 完整结果 ===');
+      for (const m of affectedMethods) {
+        console.log(`- ${m.controllerClass}.${m.methodName} (${m.impactType})`);
+      }
+      console.log(`总数量: ${affectedMethods.length}`);
+
       if (affectedMethods.length > 0) {
         const tracedControllers = [...new Set(affectedMethods.map((m) => m.controllerFile))];
         this.dependencyTracedFiles = tracedControllers;
@@ -590,8 +597,10 @@ export class ApiScanner {
           const methodEnd = this.findMethodEnd(content, methodStart);
           const methodContent = content.slice(methodStart, methodEnd);
 
-          // 提取 Java 方法名
-          const javaMethodNameMatch = methodContent.match(/\b(?:public|private|protected)\s+\S+\s+(\w+)\s*\(/);
+          // 提取 Java 方法名（跳过前面的注解）
+          const javaMethodNameMatch = methodContent.match(
+            /(?:@[\w\(\)\[\]{},"']*\s*)*\b(?:public|private|protected)\s+\S+\s+(\w+)\s*\(/,
+          );
           if (javaMethodNameMatch) {
             api.javaMethodName = javaMethodNameMatch[1];
           }
@@ -984,9 +993,35 @@ export class ApiScanner {
               const affectedMethods = this.affectedControllerMethods.get(file);
               if (affectedMethods) {
                 const methodContent = this.extractMethodContent(content, match.index!);
-                const methodNameMatch = methodContent.match(/public\s+\S+\s+(\w+)\s*\(/);
+                // 更健壮的方法名提取方法
+                let methodNameMatch = methodContent.match(
+                  /(?:@[\s\S]*?)\b(?:public|private|protected)\s+\S+\s+(\w+)\s*\(/,
+                );
+
+                // 如果正则匹配失败，尝试从 @PostMapping/@GetMapping 注解中提取方法名（Spring Boot 约定）
+                if (!methodNameMatch) {
+                  const mappingMatch = methodContent.match(
+                    /@(?:Post|Get|Put|Delete)Mapping\s*\(\s*["']?([^"']*)["']?\s*\)/,
+                  );
+                  if (mappingMatch) {
+                    // 使用 URL 路径作为方法名（去除斜杠和特殊字符）
+                    let urlPath = mappingMatch[1];
+                    if (urlPath) {
+                      // 将路径转换为驼峰命名或直接使用
+                      methodNameMatch = [urlPath, urlPath.replace(/[-_/]+(\w)/g, (_, c) => c.toUpperCase())];
+                    }
+                  }
+                }
                 const currentMethodName = methodNameMatch ? methodNameMatch[1] : null;
                 api.javaMethodName = currentMethodName || undefined;
+
+                // 调试信息：输出正在检查的方法信息
+                console.log(`=== 方法级依赖过滤检查 ===`);
+                console.log(`文件: ${file}`);
+                console.log(`提取到的方法名: ${currentMethodName}`);
+                console.log(`受影响方法集合: ${Array.from(affectedMethods)}`);
+                console.log(`方法内容片段: ${methodContent.slice(0, 100)}...`);
+
                 skipByDependencyFilter = !currentMethodName || !affectedMethods.has(currentMethodName);
               } else {
                 skipByDependencyFilter = true;

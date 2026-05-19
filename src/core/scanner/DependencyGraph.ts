@@ -410,6 +410,20 @@ export class DependencyGraph {
       if (!classInfo.isController) continue;
 
       for (const method of classInfo.methods) {
+        // 调试信息：输出所有 Controller 方法的信息
+        if (className === 'DramaProjectController') {
+          console.log(`\nController: ${className}, Method: ${method.name}`);
+          console.log(`  Request Body Type: ${method.requestBodyType}`);
+          console.log(`  Return Type: ${method.returnType}`);
+          console.log(
+            `  Is Type Affected (RequestBody): ${method.requestBodyType && this.isTypeAffected(method.requestBodyType, embeddedClosure)}`,
+          );
+          console.log(
+            `  Is Type Affected (Return): ${method.returnType && this.isTypeAffected(method.returnType, embeddedClosure)}`,
+          );
+          console.log(`  Embedded Closure: ${Array.from(embeddedClosure).join(', ')}`);
+        }
+
         const directRequestBody =
           method.requestBodyType && this.isTypeAffected(method.requestBodyType, embeddedClosure);
         const directResponse = method.returnType && this.isTypeAffected(method.returnType, embeddedClosure);
@@ -2385,6 +2399,13 @@ export class DependencyGraph {
       if (returnMatch) {
         flowsToReturn = true;
       }
+    }
+
+    // 补充：检查是否有其他间接返回模式
+    const afterContext = methodContent.slice(matchIndex + fullMatch.length);
+    const targetReturnPattern = /return\s+(?:\(\w+\)\s*)?(?:JSONObject|JSON)\.toJSON\s*\(/;
+    if (targetReturnPattern.test(afterContext)) {
+      flowsToReturn = true;
     }
 
     return { resultVar, flowsToReturn };
