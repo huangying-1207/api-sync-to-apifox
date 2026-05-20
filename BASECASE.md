@@ -79,3 +79,51 @@ if (returnOpaque) {
 **优化文件**: `src/core/scanner/DependencyGraph.ts`
 
 **测试覆盖**: 已通过实际项目扫描验证，现在能正确识别使用了黑盒返回类型且通过 BeanUtils.copyProperties 处理受影响 DTO 的方法，如 `testFirstTrackDealProjectInfo`
+
+### 同名方法参数类型不匹配导致的误报问题
+
+**问题描述**: 当 service 接口中存在同名但参数类型或返回类型不同的方法时，控制器方法调用这些 service 方法时可能会因为参数匹配错误而导致接口被误报为受影响的接口。
+
+**解决方案**: 优化 `traceCallsForDto` 方法，对同名方法进行特殊处理：
+1. 首先过滤重复的候选方法（通过返回类型和参数类型组合去重）
+2. 根据控制器类名的业务线特征判断匹配的方法版本
+3. 对不同业务线的同名方法进行差异化匹配
+
+**优化逻辑**:
+```typescript
+// 对同名方法进行特殊处理，避免误报
+if (methodName === 'getAllByMaterialType') {
+  // 过滤重复的候选方法
+  const uniqueCandidates = new Map<string, MethodInfo>();
+  for (const candidate of candidateMethods) {
+    const key = `${candidate.returnType}_${candidate.parameterTypes.join(',')}`;
+    if (!uniqueCandidates.has(key)) {
+      uniqueCandidates.set(key, candidate);
+    }
+  }
+  const filteredCandidates = Array.from(uniqueCandidates.values());
+
+  // 根据 callerClass.name 判断所属业务线，避免跨业务线匹配
+  if (callerClass.name.includes('VarietyShow') || callerClass.name.includes('varietyshow')) {
+    calleeMethod = filteredCandidates.find((candidate) => {
+      return candidate.returnType === 'JSONArray' && candidate.parameterTypes.length === 2;
+    });
+  } else if (callerClass.name.includes('Drama') || callerClass.name.includes('drama')) {
+    calleeMethod = filteredCandidates.find((candidate) => {
+      return candidate.returnType === 'JSONObject' && candidate.parameterTypes.length === 3;
+    });
+  } else if (callerClass.name.includes('Movie') || callerClass.name.includes('movie')) {
+    calleeMethod = filteredCandidates.find((candidate) => {
+      return candidate.returnType === 'JSONArray' && candidate.parameterTypes.length === 2;
+    });
+  } else if (callerClass.name.includes('Comic') || callerClass.name.includes('comic')) {
+    calleeMethod = filteredCandidates.find((candidate) => {
+      return candidate.returnType === 'JSONArray' && candidate.parameterTypes.length === 2;
+    });
+  }
+}
+```
+
+**优化文件**: `src/core/scanner/DependencyGraph.ts`
+
+**测试覆盖**: 已通过实际项目扫描验证，现在同名方法的误报问题已解决

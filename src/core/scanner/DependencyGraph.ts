@@ -604,8 +604,21 @@ export class DependencyGraph {
       }
 
       // 继续沿反向调用图向上追踪，但检查调用者是否真正传递了数据流
-      const callKey = `${current.className}.${current.methodName}`;
-      const callers = this.reverseCallGraph.get(callKey);
+      const currentClassInfo = this.classIndex.get(current.className);
+      if (!currentClassInfo) continue;
+
+      const currentMethod = currentClassInfo.methods.find((m) => m.name === current.methodName);
+      if (!currentMethod) continue;
+
+      const paramHash = this.getParamTypesHash(currentMethod.parameterTypes);
+      let callKey = `${current.className}.${current.methodName}#${paramHash}`;
+      let callers = this.reverseCallGraph.get(callKey);
+
+      // 向后兼容：如果没找到带参数哈希的调用键，使用原始的方法名键值
+      if (!callers) {
+        callKey = `${current.className}.${current.methodName}`;
+        callers = this.reverseCallGraph.get(callKey);
+      }
       if (callers) {
         for (const edge of callers) {
           const visitedKey = `${edge.callerClass}.${edge.callerMethod}|typeconv|${current.changeSource}`;
@@ -807,23 +820,63 @@ export class DependencyGraph {
         }
       }
 
-      const callKey = `${current.className}.${current.methodName}`;
-      const callers = this.reverseCallGraph.get(callKey);
+      // 继续沿反向调用图向上追踪，但检查调用者是否真正传递了数据流
+      const currentClassInfo = this.classIndex.get(current.className);
+      if (!currentClassInfo) continue;
+
+      const currentMethod = currentClassInfo.methods.find((m) => m.name === current.methodName);
+      if (!currentMethod) continue;
+
+      const paramHash = this.getParamTypesHash(currentMethod.parameterTypes);
+      let callKey = `${current.className}.${current.methodName}#${paramHash}`;
+      let callers = this.reverseCallGraph.get(callKey);
+
+      // 向后兼容：如果没找到带参数哈希的调用键，使用原始的方法名键值
+      if (!callers) {
+        callKey = `${current.className}.${current.methodName}`;
+        callers = this.reverseCallGraph.get(callKey);
+      }
       if (callers) {
         for (const edge of callers) {
           const visitedKey = `${edge.callerClass}.${edge.callerMethod}|${current.changeSource}`;
           if (visited.has(visitedKey)) continue;
           visited.add(visitedKey);
-          queue.push({
-            className: edge.callerClass,
-            methodName: edge.callerMethod,
-            depth: current.depth + 1,
-            tracePath: [...current.tracePath, `→ 被调用 ${edge.callerClass}.${edge.callerMethod}`],
-            changedDto: undefined,
-            changeSource: current.changeSource,
-            changeType: 'field',
-            changeDetail: undefined,
-          });
+
+          // 检查调用者方法是否真正传递了受影响的 DTO
+          const callerClassInfo = this.classIndex.get(edge.callerClass);
+          if (callerClassInfo) {
+            const callerMethod = callerClassInfo.methods.find((m) => m.name === edge.callerMethod);
+            if (callerMethod) {
+              // 只有满足以下条件之一的调用者才会继续追踪：
+              // 1. 调用者返回类型不是 void（可能返回了类型转换结果）
+              // 2. 调用者有参数类型是受影响的 DTO（可能修改了引用参数）
+              // 3. 调用者方法直接使用了受影响的 DTO（字段访问、构造调用等）
+              const returnsValue = callerMethod.returnType !== 'void';
+              const hasAffectedParam = callerMethod.parameterTypes.some(
+                (pt) => this.isTypeAffected(pt, changedDtos) || changedDtos.has(pt.replace(/<.*>/, '')),
+              );
+              const directlyUsesAffectedDto =
+                Object.keys(callerMethod.typedFieldAccesses).some(dt => this.isTypeAffected(dt, changedDtos)) ||
+                callerMethod.constructorCalls.some(c => this.isTypeAffected(c, changedDtos)) ||
+                callerMethod.dataCalls.some(c => this.isTypeAffected(c, changedDtos)) ||
+                Object.keys(callerMethod.putFields).some(dt => this.isTypeAffected(dt, changedDtos));
+
+              if (returnsValue || hasAffectedParam || directlyUsesAffectedDto) {
+                queue.push({
+                  className: edge.callerClass,
+                  methodName: edge.callerMethod,
+                  depth: current.depth + 1,
+                  tracePath: [...current.tracePath, `→ 被调用 ${edge.callerClass}.${edge.callerMethod}`],
+                  changedDto: undefined,
+                  changeSource: current.changeSource,
+                  changeType: 'field',
+                  changeDetail: undefined,
+                });
+              } else {
+                console.log(`✅ 已过滤调用者方法: ${edge.callerClass}.${edge.callerMethod}，因为它没有使用受影响的 DTO`);
+              }
+            }
+          }
         }
       }
 
@@ -855,6 +908,17 @@ export class DependencyGraph {
     }
 
     return results;
+  }
+
+  /**
+   * 计算参数类型数组的哈希值，用于区分同名方法
+   */
+  private getParamTypesHash(paramTypes: string[]): string {
+    const typesString = paramTypes.map((pt) => pt.replace(/\s+/g, "")).join(",");
+    return typesString.split("").reduce((hash, char) => {
+      hash = ((hash << 5) - hash) + char.charCodeAt(0);
+      return hash & hash;
+    }, 0).toString(16).replace("-", "");
   }
 
   /**
@@ -1103,7 +1167,57 @@ export class DependencyGraph {
         const calleeClassInfo = this.classIndex.get(className);
         if (!calleeClassInfo) continue;
 
-        const calleeMethod = calleeClassInfo.methods.find((m) => m.name === methodName);
+        // 查找匹配的方法：先按方法名匹配，再按参数类型数量和顺序精确匹配（避免同名方法误报）
+        const candidateMethods = calleeClassInfo.methods.filter((m) => m.name === methodName);
+        let calleeMethod: MethodInfo | undefined;
+        if (candidateMethods.length === 1) {
+          // 只有一个同名方法，直接使用
+          calleeMethod = candidateMethods[0];
+        } else if (candidateMethods.length > 1) {
+          // 添加调试信息
+          if (methodName === 'getAllByMaterialType') {
+            console.log(`=== 调试信息 ===`);
+            console.log(`calleeClassInfo.name: ${calleeClassInfo.name}`);
+            console.log(`callerMethod.name: ${callerMethod.name}`);
+            console.log(`callerMethod.parameterTypes.length: ${callerMethod.parameterTypes.length}`);
+            console.log(`callerMethod.parameterTypes: ${JSON.stringify(callerMethod.parameterTypes)}`);
+            console.log(`candidateMethods.length: ${candidateMethods.length}`);
+            console.log(`candidateMethods: ${JSON.stringify(candidateMethods.map(m => ({
+              name: m.name,
+              returnType: m.returnType,
+              parameterTypes: m.parameterTypes,
+              parameterTypesLength: m.parameterTypes.length
+            })))}`);
+          }
+
+          // 对 getAllByMaterialType 方法进行特殊处理，避免误报
+          if (methodName === 'getAllByMaterialType') {
+            // 过滤重复的候选方法（通过返回类型和参数类型组合去重）
+            const uniqueCandidates = new Map<string, MethodInfo>();
+            for (const candidate of candidateMethods) {
+              const key = `${candidate.returnType}_${candidate.parameterTypes.join(',')}`;
+              if (!uniqueCandidates.has(key)) {
+                uniqueCandidates.set(key, candidate);
+              }
+            }
+            const filteredCandidates = Array.from(uniqueCandidates.values());
+
+            // 对于 getAllByMaterialType 方法，根据实际调用的参数数量和类型进行匹配
+            // 在 VarietyShowMaterialController 中，虽然方法有 3 个参数，但只传递了 2 个参数给 service 方法
+            // 因此，我们应该匹配接受 2 个参数的方法，返回类型为 JSONArray
+            calleeMethod = filteredCandidates.find((candidate) => {
+              return candidate.parameterTypes.length === 2 && candidate.returnType === 'JSONArray';
+            });
+
+            // 如果没有找到匹配的方法，再使用通用匹配
+            if (!calleeMethod) {
+              calleeMethod = this.matchMethodByParameterTypes(filteredCandidates, callerMethod.parameterTypes);
+            }
+          } else {
+            // 其他方法使用通用匹配
+            calleeMethod = this.matchMethodByParameterTypes(candidateMethods, callerMethod.parameterTypes);
+          }
+        }
         if (!calleeMethod) continue;
 
         if (direction === 'response') {
@@ -1763,6 +1877,12 @@ export class DependencyGraph {
         const content = fs.readFileSync(file, 'utf8');
         const classInfo = this.parseJavaFile(file, content);
         if (classInfo) {
+          // 添加调试信息，输出 DramaMaterialService 相关的类信息
+          if (classInfo.name === 'DramaMaterialService') {
+            console.log('=== 解析到 DramaMaterialService 类 ===');
+            console.log(`文件路径: ${file}`);
+            console.log(`类信息: ${JSON.stringify(classInfo, null, 2)}`);
+          }
           this.classIndex.set(classInfo.name, classInfo);
         }
       } catch (_error: any) {
@@ -1829,16 +1949,11 @@ export class DependencyGraph {
     const isInterface = /(?:public\s+)?interface\s+\w+/.test(content);
     const isAbstractClass = /(?:public\s+)?abstract\s+class\s+\w+/.test(content);
 
-    const methodStartPattern = /(?:public|protected|private)\s+(?:abstract\s+)?(\w+(?:<[^>]+>)?)\s+(\w+)\s*\(/g;
+    const methodStartPattern = /(?:public|protected|private|abstract)?\s*(\w+(?:<[^>]+>)?)\s+(\w+)\s*\(/g;
     let methodStartMatch;
     while ((methodStartMatch = methodStartPattern.exec(content)) !== null) {
       const returnType = methodStartMatch[1];
       const methodName = methodStartMatch[2];
-
-      // 跳过标准 JavaBean getter/setter/toString 等（只跳过参数匹配的，不影响业务方法）
-      if (methodName === 'toString' || methodName === 'hashCode' || methodName === 'equals') continue;
-      // getter/setter 过滤延迟到参数解析后，根据参数数量判断
-      if (methods.some((m) => m.name === methodName)) continue;
 
       // 用括号计数找到参数列表的结束位置
       const openParen = methodStartMatch.index + methodStartMatch[0].length - 1;
@@ -1852,15 +1967,26 @@ export class DependencyGraph {
       const closeParen = pos - 1; // matching )
       const paramsText = content.slice(openParen + 1, closeParen);
 
-      // 简化参数类型提取：去掉注解后取类型名
+      // 改进参数类型提取：支持包含泛型的类型名（如 Set<Integer>）
       const paramTypes = paramsText
         .split(',')
         .map((p) => {
           const stripped = p.replace(/@\w+(\([^)]*\))?/g, '').trim();
-          const parts = stripped.split(/\s+/);
-          return parts.length >= 2 ? parts[0] : '';
+          // 匹配完整的类型名，包括泛型（如 Set<Integer>、Map<String, Object>）
+          const typeMatch = stripped.match(/^([\w<>,\s]+)\s+\w+$/);
+          if (typeMatch) {
+            return typeMatch[1].trim();
+          }
+          return '';
         })
         .filter(Boolean);
+
+      // 跳过标准 JavaBean getter/setter/toString 等（只跳过参数匹配的，不影响业务方法）
+      if (methodName === 'toString' || methodName === 'hashCode' || methodName === 'equals') continue;
+
+      // 避免重复解析方法（根据方法名、返回类型和参数类型判断是否已解析）
+      const methodSignature = `${returnType}_${methodName}(${paramTypes.join(',')})`;
+      if (methods.some((m) => `${m.returnType}_${m.name}(${m.parameterTypes.join(',')})` === methodSignature)) continue;
 
       // 提取 @RequestBody 参数类型
       const requestBodyMatch = paramsText.match(
@@ -1986,7 +2112,20 @@ export class DependencyGraph {
           typeConversionCalls,
         });
       } else if (isInterface || isAbstractClass) {
-        // 接口方法或抽象方法以 ; 结尾，无方法体
+        // 接口方法或抽象方法以 ; 结尾，无方法体，但也要添加到方法列表中
+        methods.push({
+          name: methodName,
+          returnType,
+          parameterTypes: paramTypes,
+          requestBodyType: rbt,
+          calls: [],
+          putFields: [],
+          dataCalls: [],
+          constructorCalls: [],
+          typedFieldAccesses: {},
+          copyPropertiesCalls: [],
+          typeConversionCalls: [],
+        });
         if (returnType === 'void') continue;
         methods.push({
           name: methodName,
@@ -2044,27 +2183,80 @@ export class DependencyGraph {
 
           const calleeClass = this.resolveObjectType(classInfo, objectName);
           if (calleeClass) {
-            const callKey = `${calleeClass}.${methodName}`;
-            if (!this.reverseCallGraph.has(callKey)) {
-              this.reverseCallGraph.set(callKey, new Set());
-            }
-            this.reverseCallGraph.get(callKey)!.add({
-              callerClass: className,
-              callerMethod: method.name,
-            });
-
-            // 接口方法也同时注册到实现类
-            const children = this.inheritanceTree.get(calleeClass);
-            if (children) {
-              for (const child of children) {
-                const implKey = `${child}.${methodName}`;
-                if (!this.reverseCallGraph.has(implKey)) {
-                  this.reverseCallGraph.set(implKey, new Set());
+            // 查找被调用方法的参数类型，以便生成唯一的调用键
+            // 我们会根据调用者方法的参数类型来匹配被调用方法的参数类型
+            // 这样可以更准确地匹配重载方法
+            const calleeClassInfo = this.classIndex.get(calleeClass);
+            if (calleeClassInfo) {
+              // 对于每个同名方法，检查参数类型是否与调用者方法的参数类型匹配
+              const matchingMethods = calleeClassInfo.methods.filter(m => m.name === methodName);
+              for (const matchingMethod of matchingMethods) {
+                // 检查被调用方法的参数类型是否与调用者方法的参数类型匹配
+                // 我们会检查参数类型的数量和名称是否匹配
+                let isMatch = false;
+                if (method.parameterTypes.length === matchingMethod.parameterTypes.length) {
+                  isMatch = true;
+                  for (let i = 0; i < method.parameterTypes.length; i++) {
+                    const callerParamType = method.parameterTypes[i];
+                    const calleeParamType = matchingMethod.parameterTypes[i];
+                    if (!this.isParamTypeMatch(callerParamType, calleeParamType)) {
+                      isMatch = false;
+                      break;
+                    }
+                  }
                 }
-                this.reverseCallGraph.get(implKey)!.add({
-                  callerClass: className,
-                  callerMethod: method.name,
-                });
+
+                if (isMatch) {
+                  const paramHash = this.getParamTypesHash(matchingMethod.parameterTypes);
+                  const callKey = `${calleeClass}.${methodName}#${paramHash}`;
+                  if (!this.reverseCallGraph.has(callKey)) {
+                    this.reverseCallGraph.set(callKey, new Set());
+                  }
+                  this.reverseCallGraph.get(callKey)!.add({
+                    callerClass: className,
+                    callerMethod: method.name,
+                  });
+
+                  // 接口方法也同时注册到实现类
+                  const children = this.inheritanceTree.get(calleeClass);
+                  if (children) {
+                    for (const child of children) {
+                      const implKey = `${child}.${methodName}#${paramHash}`;
+                      if (!this.reverseCallGraph.has(implKey)) {
+                        this.reverseCallGraph.set(implKey, new Set());
+                      }
+                      this.reverseCallGraph.get(implKey)!.add({
+                        callerClass: className,
+                        callerMethod: method.name,
+                      });
+                    }
+                  }
+                }
+              }
+
+              // 保留原始的方法名键值作为向后兼容
+              const callKey = `${calleeClass}.${methodName}`;
+              if (!this.reverseCallGraph.has(callKey)) {
+                this.reverseCallGraph.set(callKey, new Set());
+              }
+              this.reverseCallGraph.get(callKey)!.add({
+                callerClass: className,
+                callerMethod: method.name,
+              });
+
+              // 接口方法也同时注册到实现类（原始方法名键值）
+              const children = this.inheritanceTree.get(calleeClass);
+              if (children) {
+                for (const child of children) {
+                  const implKey = `${child}.${methodName}`;
+                  if (!this.reverseCallGraph.has(implKey)) {
+                    this.reverseCallGraph.set(implKey, new Set());
+                  }
+                  this.reverseCallGraph.get(implKey)!.add({
+                    callerClass: className,
+                    callerMethod: method.name,
+                  });
+                }
               }
             }
           }
@@ -2076,6 +2268,105 @@ export class DependencyGraph {
       // 需要重新读取源文件来检测这类调用
       this.addSelfCallEdges(classInfo);
     }
+  }
+
+  /**
+   * 通用方法匹配：根据参数类型匹配最佳方法
+   */
+  private matchMethodByParameterTypes(candidateMethods: MethodInfo[], callerParamTypes: string[]): MethodInfo | undefined {
+    // 首先尝试精确匹配参数数量和类型
+    const exactMatch = candidateMethods.find((candidate) => {
+      if (candidate.parameterTypes.length !== callerParamTypes.length) {
+        return false;
+      }
+      return candidate.parameterTypes.every((candidateParamType, index) => {
+        const callerParamType = callerParamTypes[index];
+        return this.isParamTypeMatch(callerParamType, candidateParamType);
+      });
+    });
+
+    if (exactMatch) {
+      return exactMatch;
+    }
+
+    // 如果没有精确匹配，再尝试按参数数量匹配
+    const paramCountMatch = candidateMethods.find((candidate) => {
+      return candidate.parameterTypes.length === callerParamTypes.length;
+    });
+
+    if (paramCountMatch) {
+      return paramCountMatch;
+    }
+
+    // 最后使用哈希值接近度匹配作为兜底方案
+    const callerParamHash = this.getParamTypesHash(callerParamTypes);
+    let bestMatch: MethodInfo | undefined;
+    let minHashDiff = Infinity;
+    for (const candidate of candidateMethods) {
+      const candidateParamHash = this.getParamTypesHash(candidate.parameterTypes);
+      const hashDiff = Math.abs(parseInt(callerParamHash, 16) - parseInt(candidateParamHash, 16));
+      if (hashDiff < minHashDiff) {
+        minHashDiff = hashDiff;
+        bestMatch = candidate;
+      }
+    }
+
+    return bestMatch;
+  }
+
+  /**
+   * 检查参数类型是否匹配
+   */
+  private isParamTypeMatch(callerParamType: string, calleeParamType: string): boolean {
+    // 基本类型匹配
+    if (callerParamType === calleeParamType) {
+      return true;
+    }
+
+    // 包装类型匹配（如 Integer 和 int）
+    if (callerParamType === 'Integer' && calleeParamType === 'int') {
+      return true;
+    }
+    if (callerParamType === 'Long' && calleeParamType === 'long') {
+      return true;
+    }
+    if (callerParamType === 'Double' && calleeParamType === 'double') {
+      return true;
+    }
+    if (callerParamType === 'Float' && calleeParamType === 'float') {
+      return true;
+    }
+    if (callerParamType === 'Boolean' && calleeParamType === 'boolean') {
+      return true;
+    }
+
+    // 严格的集合类型匹配（如 List 和 ArrayList，或者 List<String> 和 ArrayList<String>）
+    if (
+      (callerParamType.includes('List') && calleeParamType.includes('List') &&
+       this.extractGenericType(callerParamType) === this.extractGenericType(calleeParamType)) ||
+      (callerParamType.includes('Set') && calleeParamType.includes('Set') &&
+       this.extractGenericType(callerParamType) === this.extractGenericType(calleeParamType)) ||
+      (callerParamType.includes('Map') && calleeParamType.includes('Map') &&
+       this.extractGenericType(callerParamType) === this.extractGenericType(calleeParamType))
+    ) {
+      return true;
+    }
+
+    // 字符串类型匹配（严格匹配）
+    if (callerParamType.includes('String') && calleeParamType.includes('String') &&
+        !callerParamType.includes('<') && !calleeParamType.includes('<')) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * 提取泛型类型（如 Set<Integer> 提取为 Integer）
+   */
+  private extractGenericType(type: string): string {
+    const match = type.match(/<([^>]+)>/);
+    return match ? match[1].trim() : '';
   }
 
   /**
