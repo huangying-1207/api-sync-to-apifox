@@ -908,6 +908,29 @@ export class DependencyGraph {
   /**
    * 判断类型是否为"黑盒"类型（签名上看不出内部 DTO 结构）
    */
+  /**
+   * 检查方法是否与变更字段有重叠
+   */
+  private checkFieldOverlap(method: MethodInfo, changeSource: string, fieldChanges: FieldChange[]): boolean {
+    const fc = fieldChanges.find((f) => f.className === changeSource);
+    if (!fc) return true;
+
+    const changedFields = new Set([...fc.addedFields, ...fc.removedFields, ...fc.changedFields]);
+    const accessedFields = method.typedFieldAccesses[changeSource] || [];
+
+    // 对于使用了 BeanUtils.copyProperties 的方法，认为它访问了所有字段
+    // 对于直接返回受影响 DTO 的方法（没有访问字段），也应包含在受影响接口列表中
+    const usesBeanUtilsCopy = method.calls.some((call) => call.includes('BeanUtils.copyProperties'));
+    const isDirectlyReturningDto =
+      method.constructorCalls.includes(changeSource) ||
+      method.returnType.includes(changeSource) ||
+      method.typeConversionCalls.some((tc) => tc.targetTypeName.includes(changeSource));
+    const hasFieldOverlap =
+      usesBeanUtilsCopy || accessedFields.some((f) => changedFields.has(f)) || isDirectlyReturningDto;
+
+    return hasFieldOverlap;
+  }
+
   private isOpaqueType(type: string | undefined): boolean {
     if (!type) return false;
     const opaqueTypes = ['JSONObject', 'Object', 'Map', 'HashMap', 'LinkedHashMap', 'Response', 'JsonNode'];
@@ -965,31 +988,26 @@ export class DependencyGraph {
           // 字段级过滤：只有当方法实际访问了变更字段时才标记受影响
           let shouldInclude = true;
           if (fieldChanges) {
+            shouldInclude = this.checkFieldOverlap(method, changeSource, fieldChanges);
+
+            // 调试信息
             const fc = fieldChanges.find((f) => f.className === changeSource);
             if (fc) {
               const changedFields = new Set([...fc.addedFields, ...fc.removedFields, ...fc.changedFields]);
               const accessedFields = method.typedFieldAccesses[changeSource] || [];
-
-              // 对于使用了 BeanUtils.copyProperties 的方法，认为它访问了所有字段
-              // 对于直接返回受影响 DTO 的方法（没有访问字段），也应包含在受影响接口列表中
               const usesBeanUtilsCopy = method.calls.some((call) => call.includes('BeanUtils.copyProperties'));
               const isDirectlyReturningDto =
                 method.constructorCalls.includes(changeSource) ||
                 method.returnType.includes(changeSource) ||
                 method.typeConversionCalls.some((tc) => tc.targetTypeName.includes(changeSource));
-              const hasFieldOverlap =
-                usesBeanUtilsCopy || accessedFields.some((f) => changedFields.has(f)) || isDirectlyReturningDto;
 
-              // 调试信息
               console.log(`=== 字段级过滤详情 ===`);
               console.log(`  方法名: ${controllerClass.name}.${method.name}`);
               console.log(`  变更源: ${changeSource}`);
               console.log(`  变更字段: ${Array.from(changedFields)}`);
               console.log(`  方法访问的字段: ${accessedFields}`);
               console.log(`  是否使用 BeanUtils.copyProperties: ${usesBeanUtilsCopy}`);
-              console.log(`  是否有重叠: ${hasFieldOverlap}`);
-
-              shouldInclude = hasFieldOverlap;
+              console.log(`  是否有重叠: ${shouldInclude}`);
             }
           }
 
@@ -1113,14 +1131,8 @@ export class DependencyGraph {
             if (this.isTypeAffected(ctorCall, affectedDtos)) {
               const changeSource = this.findChangeSourceForType(ctorCall, changedDtos, fieldChangePoints);
               // 字段级过滤：只有当被调用方法实际访问了变更字段时才标记受影响
-              if (fieldChanges) {
-                const fc = fieldChanges.find((f) => f.className === changeSource);
-                if (fc) {
-                  const changedFields = new Set([...fc.addedFields, ...fc.removedFields, ...fc.changedFields]);
-                  const accessedFields = calleeMethod.typedFieldAccesses[changeSource] || [];
-                  const hasFieldOverlap = accessedFields.some((f) => changedFields.has(f));
-                  if (!hasFieldOverlap) continue;
-                }
+              if (fieldChanges && !this.checkFieldOverlap(calleeMethod, changeSource, fieldChanges)) {
+                continue;
               }
               const alreadyInResults = results.some(
                 (r) =>
@@ -1203,14 +1215,8 @@ export class DependencyGraph {
             if (this.isTypeAffected(ctorCall, affectedDtos)) {
               const changeSource = this.findChangeSourceForType(ctorCall, changedDtos, fieldChangePoints);
               // 字段级过滤：只有当被调用方法实际访问了变更字段时才标记受影响
-              if (fieldChanges) {
-                const fc = fieldChanges.find((f) => f.className === changeSource);
-                if (fc) {
-                  const changedFields = new Set([...fc.addedFields, ...fc.removedFields, ...fc.changedFields]);
-                  const accessedFields = calleeMethod.typedFieldAccesses[changeSource] || [];
-                  const hasFieldOverlap = accessedFields.some((f) => changedFields.has(f));
-                  if (!hasFieldOverlap) continue;
-                }
+              if (fieldChanges && !this.checkFieldOverlap(calleeMethod, changeSource, fieldChanges)) {
+                continue;
               }
               const alreadyInResults = results.some(
                 (r) =>
@@ -2498,6 +2504,13 @@ export class DependencyGraph {
           if (targetReturnPattern.test(afterContext)) {
             flowsToReturn = true;
           }
+        }
+
+        // 情况1.3: 变量经过处理后再返回（如：varName.put(...) 然后 return varName）
+        // 检查变量是否被修改后直接返回
+        const modifiedReturnPattern = new RegExp(`return\\s+${resultVar}\\s*;`);
+        if (modifiedReturnPattern.test(afterContext)) {
+          flowsToReturn = true;
         }
       }
     } else {
