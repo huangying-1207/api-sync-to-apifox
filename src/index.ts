@@ -9,6 +9,7 @@ import ApiFormatter from './modules/formatter';
 import ApifoxSyncer from './modules/syncer';
 import { ErrorHandler } from './utils/errorHandler';
 import { ConfigValidator } from './utils/configValidator';
+import { ApiInfo } from './types';
 
 class ApifoxSync {
   private scanner: ApiScanner;
@@ -21,6 +22,101 @@ class ApifoxSync {
     this.comparer = new ApiComparer();
     this.formatter = new ApiFormatter();
     this.syncer = new ApifoxSyncer();
+  }
+
+  /**
+   * 处理变更源及受影响接口的输出和报告生成
+   */
+  private handleChangeImpact(changeImpact: Map<string, any[]>, detectedApis: ApiInfo[]): void {
+    if (changeImpact.size === 0) {
+      return;
+    }
+
+    // 计算总受影响接口数量
+    const totalAffectedApis = this.calculateTotalAffectedApis(changeImpact, detectedApis);
+    const lines: string[] = [`变更源及受影响接口: (共 ${totalAffectedApis} 个接口)\n`];
+
+    // 遍历变更源并分组输出
+    changeImpact.forEach((methods, changeSource) => {
+      const requestApis: string[] = [];
+      const responseApis: string[] = [];
+
+      for (const m of methods) {
+        const matchedApis = detectedApis.filter((api) => {
+          if (!api.controller || api.controller.replace('.java', '') !== m.controllerClass) return false;
+          if (api.javaMethodName) {
+            return api.javaMethodName === m.methodName;
+          }
+          return true;
+        });
+
+        for (const api of matchedApis) {
+          const label = `${api.method.toUpperCase()} ${api.path}`;
+          if (m.impactType === 'request_body') {
+            if (!requestApis.includes(label)) requestApis.push(label);
+          } else {
+            if (!responseApis.includes(label)) responseApis.push(label);
+          }
+        }
+      }
+
+      const total = requestApis.length + responseApis.length;
+      console.log(`  ${changeSource} → ${total} 个接口`);
+      lines.push(`${changeSource} → ${total} 个接口`);
+
+      if (requestApis.length > 0) {
+        console.log(`    影响入参:`);
+        lines.push('  影响入参:');
+        for (const line of requestApis) {
+          console.log(`      ${line}`);
+          lines.push(`    ${line}`);
+        }
+      }
+
+      if (responseApis.length > 0) {
+        console.log(`    影响响应:`);
+        lines.push('  影响响应:');
+        for (const line of responseApis) {
+          console.log(`      ${line}`);
+          lines.push(`    ${line}`);
+        }
+      }
+
+      lines.push('');
+    });
+
+    // 写入报告文件
+    const reportDir = path.join(process.cwd(), 'temp');
+    if (!fs.existsSync(reportDir)) {
+      fs.mkdirSync(reportDir, { recursive: true });
+    }
+    const reportPath = path.join(reportDir, 'change-impact-report.txt');
+    fs.writeFileSync(reportPath, lines.join('\n'), 'utf8');
+    console.log(`\n变更影响详情已写入: ${reportPath}`);
+  }
+
+  /**
+   * 计算变更源影响的接口总数
+   */
+  private calculateTotalAffectedApis(changeImpact: Map<string, any[]>, detectedApis: ApiInfo[]): number {
+    let totalAffectedApis = 0;
+    changeImpact.forEach((methods) => {
+      const uniqueApis = new Set<string>();
+      for (const m of methods) {
+        const matchedApis = detectedApis.filter((api) => {
+          if (!api.controller || api.controller.replace('.java', '') !== m.controllerClass) return false;
+          if (api.javaMethodName) {
+            return api.javaMethodName === m.methodName;
+          }
+          return true;
+        });
+        matchedApis.forEach((api) => {
+          uniqueApis.add(`${api.method.toUpperCase()} ${api.path}`);
+        });
+      }
+      totalAffectedApis += uniqueApis.size;
+    });
+    return totalAffectedApis;
   }
 
   /**
@@ -170,59 +266,7 @@ class ApifoxSync {
 
         // 按变更源类分组输出受影响的接口
         const changeImpact = this.scanner.getChangeSourceImpact();
-        if (changeImpact.size > 0) {
-          const lines: string[] = ['变更源及受影响接口:\n'];
-          changeImpact.forEach((methods, changeSource) => {
-            // 按 impactType 分组
-            const requestApis: string[] = [];
-            const responseApis: string[] = [];
-            for (const m of methods) {
-              const matchedApis = detectedApis.filter((api) => {
-                if (!api.controller || api.controller.replace('.java', '') !== m.controllerClass) return false;
-                if (api.javaMethodName) {
-                  return api.javaMethodName === m.methodName;
-                }
-                return true;
-              });
-              for (const api of matchedApis) {
-                const label = `${api.method.toUpperCase()} ${api.path}`;
-                if (m.impactType === 'request_body') {
-                  if (!requestApis.includes(label)) requestApis.push(label);
-                } else {
-                  if (!responseApis.includes(label)) responseApis.push(label);
-                }
-              }
-            }
-            const total = requestApis.length + responseApis.length;
-            console.log(`  ${changeSource} → ${total} 个接口`);
-            lines.push(`${changeSource} → ${total} 个接口`);
-            if (requestApis.length > 0) {
-              console.log(`    影响入参:`);
-              lines.push('  影响入参:');
-              for (const line of requestApis) {
-                console.log(`      ${line}`);
-                lines.push(`    ${line}`);
-              }
-            }
-            if (responseApis.length > 0) {
-              console.log(`    影响响应:`);
-              lines.push('  影响响应:');
-              for (const line of responseApis) {
-                console.log(`      ${line}`);
-                lines.push(`    ${line}`);
-              }
-            }
-            lines.push('');
-          });
-          // 写入文件
-          const reportDir = path.join(process.cwd(), 'temp');
-          if (!fs.existsSync(reportDir)) {
-            fs.mkdirSync(reportDir, { recursive: true });
-          }
-          const reportPath = path.join(reportDir, 'change-impact-report.txt');
-          fs.writeFileSync(reportPath, lines.join('\n'), 'utf8');
-          console.log(`\n变更影响详情已写入: ${reportPath}`);
-        }
+        this.handleChangeImpact(changeImpact, detectedApis);
 
         if (projectId && apiKey) {
           const existingApis = await this.syncer.getApifoxExistingApis(projectId, apiKey);
@@ -355,57 +399,7 @@ class ApifoxSync {
           this.formatter.setDtoSchemas(this.scanner.getDtoSchemas());
 
           const changeImpact = this.scanner.getChangeSourceImpact();
-          if (changeImpact.size > 0) {
-            const lines: string[] = ['变更源及受影响接口:\n'];
-            changeImpact.forEach((methods, changeSource) => {
-              const requestApis: string[] = [];
-              const responseApis: string[] = [];
-              for (const m of methods) {
-                const matchedApis = detectedApis.filter((api) => {
-                  if (!api.controller || api.controller.replace('.java', '') !== m.controllerClass) return false;
-                  if (api.javaMethodName) {
-                    return api.javaMethodName === m.methodName;
-                  }
-                  return true;
-                });
-                for (const api of matchedApis) {
-                  const label = `${api.method.toUpperCase()} ${api.path}`;
-                  if (m.impactType === 'request_body') {
-                    if (!requestApis.includes(label)) requestApis.push(label);
-                  } else {
-                    if (!responseApis.includes(label)) responseApis.push(label);
-                  }
-                }
-              }
-              const total = requestApis.length + responseApis.length;
-              console.log(`  ${changeSource} → ${total} 个接口`);
-              lines.push(`${changeSource} → ${total} 个接口`);
-              if (requestApis.length > 0) {
-                console.log(`    影响入参:`);
-                lines.push('  影响入参:');
-                for (const line of requestApis) {
-                  console.log(`      ${line}`);
-                  lines.push(`    ${line}`);
-                }
-              }
-              if (responseApis.length > 0) {
-                console.log(`    影响响应:`);
-                lines.push('  影响响应:');
-                for (const line of responseApis) {
-                  console.log(`      ${line}`);
-                  lines.push(`    ${line}`);
-                }
-              }
-              lines.push('');
-            });
-            const reportDir = path.join(process.cwd(), 'temp');
-            if (!fs.existsSync(reportDir)) {
-              fs.mkdirSync(reportDir, { recursive: true });
-            }
-            const reportPath = path.join(reportDir, 'change-impact-report.txt');
-            fs.writeFileSync(reportPath, lines.join('\n'), 'utf8');
-            console.log(`\n变更影响详情已写入: ${reportPath}`);
-          }
+          this.handleChangeImpact(changeImpact, detectedApis);
 
           openApiDoc = this.formatter.generateApiDocFromCode(detectedApis);
 
