@@ -1,7 +1,7 @@
 import { spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { ApifoxBranch } from '../types';
+import { ApifoxBranch } from '../../types';
 
 const BRANCH_CACHE_TTL_MS = 30 * 60 * 1000;
 const APIFOX_CLI_VERSION = '2.2.4';
@@ -204,11 +204,4 @@ export function toAgentBranchView(branch: ApifoxBranch): ApifoxBranch {
     isArchived: branch.isArchived,
     type: branch.type,
   };
-}
-
-export function clearBranchCache(): void {
-  const cachePath = getBranchCachePath();
-  if (fs.existsSync(cachePath)) {
-    fs.unlinkSync(cachePath);
-  }
 }

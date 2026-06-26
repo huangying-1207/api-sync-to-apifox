@@ -1,9 +1,8 @@
 import * as readline from 'readline';
-import { ApifoxBranch, SyncPlan } from '../types';
+import { ApifoxBranch, SyncPlan } from '../../types';
 import {
   fetchProjectBranchesViaCli,
   getDefaultBranch,
-  toAgentBranchView,
   toPublicBranchView,
 } from './apifoxBranchClient';
 
@@ -219,8 +218,4 @@ export function buildBranchListPayload(branches: ApifoxBranch[]): {
       type: branch.type,
     })),
   };
-}
-
-export function buildAgentBranchSelection(branch: ApifoxBranch): ApifoxBranch {
-  return toAgentBranchView(branch);
 }

@@ -1,5 +1,5 @@
 const { expect } = require('chai');
-const { diffParamNames, isIgnorableApiParam } = require('../dist/utils/apiParamFilter');
+const { diffParamNames, isIgnorableApiParam } = require('../dist/utils/openapi/apiParamFilter');
 
 describe('apiParamFilter', () => {
   it('忽略常见 Header 鉴权参数', () => {

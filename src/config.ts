@@ -96,17 +96,6 @@ class ConfigManager {
   }
 
   /**
-   * 创建默认配置文件
-   */
-  createDefaultConfig(): string {
-    const defaultConfig = ConfigValidator.generateDefaultConfig();
-    const defaultPath = path.join(process.cwd(), '.apifoxsync.json');
-    fs.writeFileSync(defaultPath, JSON.stringify(defaultConfig, null, 2));
-    console.log(`已创建默认配置文件: ${defaultPath}`);
-    return defaultPath;
-  }
-
-  /**
    * 设置配置值
    */
   setConfig<T extends keyof Config>(key: T, value: Config[T]): void {

@@ -10,7 +10,7 @@ const {
   parseBranchId,
   parseBranchesConfig,
   resolveTargetBranch,
-} = require('../dist/utils/apifoxBranch');
+} = require('../dist/utils/apifox/apifoxBranch');
 
 describe('apifoxBranch', () => {
   const sampleBranches = [

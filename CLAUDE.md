@@ -24,7 +24,33 @@ npm start              # Run the CLI
 
 ## Architecture
 
-Entry point: `src/index.ts` — parses CLI args, validates config, dispatches to commands.
+Entry point: `src/index.ts` — thin wrapper, delegates to `src/cli/program.ts`.
+
+```
+src/
+├── index.ts              # CLI 入口（薄层）
+├── config.ts             # 配置管理
+├── cli/                  # 命令行层
+│   ├── program.ts        # commander 子命令注册
+│   ├── app.ts            # scan / sync / workflow 编排
+│   ├── configInit.ts     # config init
+│   └── help.ts
+├── clients/
+│   └── apifoxClient.ts   # Apifox HTTP 客户端
+├── core/
+│   ├── pipeline.ts       # scan → format 流水线
+│   └── scanner/
+│       ├── ApiScanner.ts       # 扫描编排
+│       ├── frameworks.ts       # 框架配置
+│       └── springbootParser.ts # Spring Boot 解析
+├── modules/              # formatter / comparer / syncer
+├── mcp/                  # MCP 连接管理
+├── types/
+└── utils/
+    ├── cliArgs.ts        # 参数解析与校验
+    ├── apifox/           # 分支、同步计划、凭据
+    └── openapi/          # OpenAPI 遍历、接口 diff
+```
 
 **Data flow:**
 ```

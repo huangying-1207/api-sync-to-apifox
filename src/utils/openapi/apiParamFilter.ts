@@ -1,4 +1,4 @@
-import { ApiParameter } from '../types';
+import { ApiParameter } from '../../types';
 
 /** Apifox 全局 Header / 鉴权参数，与业务契约无关，对比时忽略 */
 const IGNORED_HEADER_PARAM_NAMES = new Set([

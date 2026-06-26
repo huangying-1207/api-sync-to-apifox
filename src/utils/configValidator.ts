@@ -112,26 +112,6 @@ export class ConfigValidator {
   }
 
   /**
-   * 验证配置是否有效
-   */
-  static isValid(config: Partial<Config>): boolean {
-    return this.validate(config).length === 0;
-  }
-
-  /**
-   * 格式化验证错误信息
-   */
-  static formatErrors(errors: any[]): string[] {
-    return errors.map((error) => {
-      let message = error.message;
-      if (error.field) {
-        message = `字段 ${error.field}: ${message}`;
-      }
-      return message;
-    });
-  }
-
-  /**
    * 生成默认配置
    */
   static generateDefaultConfig(): Config {
@@ -144,16 +124,6 @@ export class ConfigValidator {
       'trigger-mode': 'auto',
       'sync-mode': 'incremental',
       'scan-type': 'changed',
-    };
-  }
-
-  /**
-   * 合并配置
-   */
-  static mergeConfigs(baseConfig: Config, overrideConfig: Partial<Config>): Config {
-    return {
-      ...baseConfig,
-      ...overrideConfig,
     };
   }
 }

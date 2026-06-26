@@ -30,20 +30,6 @@ export interface ApiComparisonResult {
   removed: ApiInfo[];
 }
 
-export interface ApiDocument {
-  openapi: string;
-  info: {
-    title: string;
-    version: string;
-    description: string;
-  };
-  paths: Record<string, Record<string, any>>;
-  components: {
-    schemas: Record<string, any>;
-    parameters: Record<string, any>;
-  };
-}
-
 export interface FrameworkConfig {
   name: string;
   filePattern: string;
@@ -113,9 +99,4 @@ export interface Config {
   'apifox-branch-id'?: number;
   /** 可选分支列表，用于同步前选择；可在 Apifox「管理迭代分支」中查看 ID */
   'apifox-branches'?: ApifoxBranch[];
-}
-
-export interface ProjectConnectionInfo {
-  projectId: string;
-  apiKey: string;
 }

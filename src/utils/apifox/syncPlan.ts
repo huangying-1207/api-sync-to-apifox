@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { SyncPlan } from '../types';
+import { SyncPlan } from '../../types';
 import { formatBranchUserLabel } from './apifoxBranch';
 
 const DEFAULT_PLAN_PATH = path.join(process.cwd(), 'temp', 'apifox-sync-plan.json');
@@ -166,15 +166,6 @@ export function writeSyncPlanMarkdown(plan: SyncPlan, mdPath?: string): string {
 
   fs.writeFileSync(resolved, lines.join('\n'), 'utf8');
   return resolved;
-}
-
-export function confirmSyncPlan(plan: SyncPlan): SyncPlan {
-  return {
-    ...plan,
-    status: 'confirmed',
-    userConfirmed: true,
-    confirmedAt: new Date().toISOString(),
-  };
 }
 
 export function syncApisToParam(syncApis: Array<{ method: string; path: string }>): string {
