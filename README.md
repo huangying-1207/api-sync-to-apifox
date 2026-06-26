@@ -116,6 +116,42 @@ node dist/index.js mcp
     npx api-sync-to-apifox sync
 ```
 
+## Cursor Skill
+
+本项目内置 Cursor Agent Skill，支持「代码变更 → LLM 影响分析 → Apifox 同步」完整工作流。
+
+**Skill 路径**: `.cursor/skills/api-sync-to-apifox/SKILL.md`
+
+### 工作流
+
+1. **scan** — 检测 Git 变更，生成 `temp/apifox-sync-plan.json`
+2. **LLM 分析** — Agent 读 git diff，填写 `syncApis`
+3. **用户确认** — 审阅 `apifox-sync-plan.md`
+4. **sync** — 仅同步已确认计划中的接口
+
+在 Cursor 中提及「接口同步」「Apifox」「代码变更影响接口」时，Agent 会自动加载该 Skill。
+
+### 同步 Skill 到后端项目
+
+工具更新后，将 Cursor Skill 同步到任意后端项目：
+
+```bash
+# 方式一：命令行指定路径（推荐，无需改配置）
+npm run build
+npm run sync-skill -- --path D:/IDEA/your-backend-project
+npm run sync-skill -- --path D:/IDEA/proj-a --path D:/IDEA/proj-b
+
+# 方式二：写入本地配置文件后批量同步
+cp scripts/skill-targets.example.json scripts/skill-targets.json
+# 编辑 skill-targets.json 填写 targets
+npm run sync-skill
+npm run sync-skill -- --target my-backend   # 只同步配置中某一个
+npm run sync-skill -- --list                # 查看配置列表
+```
+
+`skill-targets.json` 为本地配置（已 gitignore），每人路径不同互不影响。  
+若目标项目已有 `.apifoxsync.json`，会自动读取 `source-path`、`framework`、`project-name`。
+
 ## 开发
 
 ```bash

@@ -9,7 +9,28 @@ import ApiFormatter from './modules/formatter';
 import ApifoxSyncer from './modules/syncer';
 import { ErrorHandler } from './utils/errorHandler';
 import { ConfigValidator } from './utils/configValidator';
-import { ApiInfo } from './types';
+import {
+  createEmptySyncPlan,
+  ensureTempDir,
+  getDefaultPlanPath,
+  isConfirmedSyncPlan,
+  loadSyncPlan,
+  syncApisToParam,
+  validateSyncPlanForSync,
+  writeSyncPlan,
+} from './utils/syncPlan';
+import {
+  branchToTargetBranchId,
+  buildBranchListPayload,
+  formatBranchLabel,
+  formatBranchUserLabel,
+  loadProjectBranches,
+  normalizePlanBranch,
+  parseBranchId,
+  parseBranchesConfig,
+  resolveTargetBranch,
+} from './utils/apifoxBranch';
+import { ApiInfo, ApifoxBranch, SyncPlan } from './types';
 
 class ApifoxSync {
   private scanner: ApiScanner;
@@ -24,99 +45,52 @@ class ApifoxSync {
     this.syncer = new ApifoxSyncer();
   }
 
-  /**
-   * 处理变更源及受影响接口的输出和报告生成
-   */
-  private handleChangeImpact(changeImpact: Map<string, any[]>, detectedApis: ApiInfo[]): void {
-    if (changeImpact.size === 0) {
-      return;
+  private collectGitDiff(sourcePath: string): string {
+    try {
+      const projectRoot = this.scanner.getGitRoot(sourcePath);
+      const childProcess = require('child_process');
+      const result = childProcess.spawnSync('git', ['diff'], {
+        cwd: projectRoot,
+        encoding: 'utf8',
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      return `${result.stdout || ''}${result.stderr || ''}`.trim();
+    } catch {
+      return '';
     }
-
-    // 计算总受影响接口数量
-    const totalAffectedApis = this.calculateTotalAffectedApis(changeImpact, detectedApis);
-    const lines: string[] = [`变更源及受影响接口: (共 ${totalAffectedApis} 个接口)\n`];
-
-    // 遍历变更源并分组输出
-    changeImpact.forEach((methods, changeSource) => {
-      const requestApis: string[] = [];
-      const responseApis: string[] = [];
-
-      for (const m of methods) {
-        const matchedApis = detectedApis.filter((api) => {
-          if (!api.controller || api.controller.replace('.java', '') !== m.controllerClass) return false;
-          if (api.javaMethodName) {
-            return api.javaMethodName === m.methodName;
-          }
-          return true;
-        });
-
-        for (const api of matchedApis) {
-          const label = `${api.method.toUpperCase()} ${api.path}`;
-          if (m.impactType === 'request_body') {
-            if (!requestApis.includes(label)) requestApis.push(label);
-          } else {
-            if (!responseApis.includes(label)) responseApis.push(label);
-          }
-        }
-      }
-
-      const total = requestApis.length + responseApis.length;
-      console.log(`  ${changeSource} → ${total} 个接口`);
-      lines.push(`${changeSource} → ${total} 个接口`);
-
-      if (requestApis.length > 0) {
-        console.log(`    影响入参:`);
-        lines.push('  影响入参:');
-        for (const line of requestApis) {
-          console.log(`      ${line}`);
-          lines.push(`    ${line}`);
-        }
-      }
-
-      if (responseApis.length > 0) {
-        console.log(`    影响响应:`);
-        lines.push('  影响响应:');
-        for (const line of responseApis) {
-          console.log(`      ${line}`);
-          lines.push(`    ${line}`);
-        }
-      }
-
-      lines.push('');
-    });
-
-    // 写入报告文件
-    const reportDir = path.join(process.cwd(), 'temp');
-    if (!fs.existsSync(reportDir)) {
-      fs.mkdirSync(reportDir, { recursive: true });
-    }
-    const reportPath = path.join(reportDir, 'change-impact-report.txt');
-    fs.writeFileSync(reportPath, lines.join('\n'), 'utf8');
-    console.log(`\n变更影响详情已写入: ${reportPath}`);
   }
 
-  /**
-   * 计算变更源影响的接口总数
-   */
-  private calculateTotalAffectedApis(changeImpact: Map<string, any[]>, detectedApis: ApiInfo[]): number {
-    let totalAffectedApis = 0;
-    changeImpact.forEach((methods) => {
-      const uniqueApis = new Set<string>();
-      for (const m of methods) {
-        const matchedApis = detectedApis.filter((api) => {
-          if (!api.controller || api.controller.replace('.java', '') !== m.controllerClass) return false;
-          if (api.javaMethodName) {
-            return api.javaMethodName === m.methodName;
-          }
-          return true;
-        });
-        matchedApis.forEach((api) => {
-          uniqueApis.add(`${api.method.toUpperCase()} ${api.path}`);
-        });
-      }
-      totalAffectedApis += uniqueApis.size;
-    });
-    return totalAffectedApis;
+  private apiToSyncPlanApi(api: ApiInfo): any {
+    return {
+      method: api.method.toUpperCase(),
+      path: api.path,
+      controllerClass: api.controller?.replace('.java', ''),
+      javaMethodName: api.javaMethodName,
+    };
+  }
+
+  private writeSyncPlanDraft(
+    sourcePath: string,
+    detectedApis: ApiInfo[],
+    comparerSummary?: string,
+  ): void {
+    const planPath = getDefaultPlanPath();
+    if (isConfirmedSyncPlan(planPath)) {
+      console.log('⚠️  检测到已确认的同步计划，本次 scan 将作废旧确认，需重新分析并确认');
+    }
+
+    const changedFiles = this.scanner.getChangedFiles();
+    const gitDiff = this.collectGitDiff(sourcePath);
+    const plan = createEmptySyncPlan(changedFiles, gitDiff);
+    plan.scanCandidates = detectedApis.map((api) => this.apiToSyncPlanApi(api));
+    plan.analysis.summary =
+      comparerSummary ||
+      '待 LLM 分析：请根据 git diff 与变更文件，判断哪些 Controller 接口的入参/响应受影响，并填写 syncApis。';
+    const jsonPath = writeSyncPlan(plan);
+    console.log(`\n📋 变更文档已生成（status: pending，待确认）:`);
+    console.log(`  - ${jsonPath}`);
+    console.log(`  - ${path.join(process.cwd(), 'temp', 'apifox-sync-plan.md')}`);
+    console.log(`\n下一步：执行 workflow 或 branches --json，由 LLM 分析后用户确认再 sync。`);
   }
 
   /**
@@ -183,6 +157,122 @@ class ApifoxSync {
     return parsed;
   }
 
+  private async resolveSyncTargetBranch(
+    args: any,
+    plan?: SyncPlan,
+    projectId?: string,
+    apiKey?: string,
+  ): Promise<ApifoxBranch> {
+    const configBranches = parseBranchesConfig(args['apifox-branches']);
+    const branches = await loadProjectBranches({
+      projectId,
+      apiKey,
+      configBranches,
+      forceRefresh: args['refresh-branches'] === true,
+    });
+
+    return resolveTargetBranch({
+      cliBranchId: parseBranchId(args['apifox-branch-id']),
+      cliBranchName: args['apifox-branch-name'],
+      configBranchId: parseBranchId(configManager.getConfig('apifox-branch-id')),
+      planBranch: plan ? normalizePlanBranch(plan) : undefined,
+      branches,
+      noBranchPrompt: args['no-branch-prompt'] === true,
+    });
+  }
+
+  async listBranches(): Promise<void> {
+    const args = this.parseArgs();
+    const payload = await this.fetchBranchPayload(args);
+
+    if (args.json === true) {
+      console.log(JSON.stringify(payload, null, 2));
+      return;
+    }
+
+    console.log('=== Apifox 项目分支 ===');
+    console.log(`默认分支: ${payload.defaultBranch}`);
+    console.log('');
+    for (const branch of payload.branches) {
+      console.log(`- ${formatBranchUserLabel(branch)}`);
+    }
+    console.log('');
+    console.log('确认同步时，请让用户选择分支名称；工具内部会使用对应分支 ID。');
+    console.log('如需机器读取，请加 --json');
+  }
+
+  private async fetchBranchPayload(args: any): Promise<ReturnType<typeof buildBranchListPayload>> {
+    const projectId = args['apifox-project-id'];
+    const apiKey = args['apifox-api-key'];
+
+    if (!projectId || !apiKey) {
+      throw new Error('请提供 Apifox 项目凭据：--apifox-project-id 与 --apifox-api-key，或已连接的 --project-name');
+    }
+
+    const configBranches = parseBranchesConfig(args['apifox-branches']);
+    const branches = await loadProjectBranches({
+      projectId,
+      apiKey,
+      configBranches,
+      forceRefresh: args['refresh-branches'] === true,
+    });
+    return buildBranchListPayload(branches);
+  }
+
+  private writeWorkflowSummary(branchPayload: ReturnType<typeof buildBranchListPayload>): void {
+    ensureTempDir();
+    const planPath = getDefaultPlanPath();
+    let plan: Partial<SyncPlan> = {};
+    if (fs.existsSync(planPath)) {
+      plan = JSON.parse(fs.readFileSync(planPath, 'utf8')) as SyncPlan;
+    }
+
+    const summary = {
+      generatedAt: new Date().toISOString(),
+      changedFiles: plan.changedFiles || [],
+      scanCandidates: plan.scanCandidates || [],
+      analysisHint: plan.analysis?.summary || '',
+      branches: branchPayload,
+      nextSteps: [
+        'LLM 分析 gitDiff 与变更文件，填写 syncApis / excludedApis',
+        '向用户展示分支名称列表，确认目标分支',
+        '更新 apifox-sync-plan.json：userConfirmed=true、targetBranch、confirmedAt',
+        '执行 sync --sync-mode incremental',
+      ],
+    };
+
+    const summaryPath = path.join(process.cwd(), 'temp', 'apifox-workflow-summary.json');
+    fs.writeFileSync(summaryPath, JSON.stringify(summary, null, 2), 'utf8');
+    console.log(`\n📦 工作流摘要: ${summaryPath}`);
+  }
+
+  /**
+   * 一键工作流：scan + 分支列表（不执行 sync）
+   */
+  async workflow(): Promise<void> {
+    console.log('=== Apifox 同步工作流（scan + branches）===\n');
+    await this.scan();
+
+    const args = this.parseArgs();
+    if (!args['apifox-project-id'] || !args['apifox-api-key']) {
+      console.log('\n未配置 Apifox 凭据，跳过分支查询。');
+      console.log('=== 工作流完成 ===');
+      return;
+    }
+
+    console.log('\n=== 分支列表（供确认同步前选择）===\n');
+    try {
+      const payload = await this.fetchBranchPayload(args);
+      console.log(JSON.stringify(payload, null, 2));
+      this.writeWorkflowSummary(payload);
+    } catch (error) {
+      console.warn(`分支查询失败: ${(error as Error).message}`);
+    }
+
+    console.log('\n=== 工作流完成 ===');
+    console.log('下一步：LLM 分析 temp/apifox-sync-plan.json，用户确认分支与接口后执行 sync。');
+  }
+
   /**
    * 验证参数是否完整
    */
@@ -212,6 +302,9 @@ class ApifoxSync {
         console.log('Options:');
         console.log('  --trigger-mode <auto|manual> 触发模式 (默认: auto)');
         console.log('  --sync-mode <incremental|full> 同步模式 (默认: incremental)');
+        console.log('  --apifox-branch-id <ID>           指定 Apifox 迭代分支 ID');
+        console.log('  --apifox-branch-name <名称>       指定 Apifox 分支名称（推荐）');
+        console.log('  --no-branch-prompt                跳过交互式分支选择，使用默认主分支');
         console.log('  --apis <METHOD:PATH,...> 指定多个接口同步 (例如: "GET:/api/users,POST:/api/users")');
         console.log('  --api-method <method> --api-path <path> 单独接口同步');
       } else if (commands === 'scan') {
@@ -264,9 +357,7 @@ class ApifoxSync {
         const detectedApis = await this.scanner.scanCodeForChanges(sourcePath, framework);
         this.formatter.setDtoSchemas(this.scanner.getDtoSchemas());
 
-        // 按变更源类分组输出受影响的接口
-        const changeImpact = this.scanner.getChangeSourceImpact();
-        this.handleChangeImpact(changeImpact, detectedApis);
+        let comparerSummary: string | undefined;
 
         if (projectId && apiKey) {
           const existingApis = await this.syncer.getApifoxExistingApis(projectId, apiKey);
@@ -278,41 +369,32 @@ class ApifoxSync {
             console.log(`\n需要格式化的接口：${unformattedCount}个接口的字段说明需要格式化为中文`);
           }
 
-          const hasChanges =
-            this.comparer.scanResults.added.length > 0 ||
-            this.comparer.scanResults.updated.length > 0 ||
-            this.comparer.scanResults.removed.length > 0;
-          if (hasChanges) {
-            console.log(`\n🚨 检测到接口变更！请执行 npm run sync 命令进行同步`);
+          const added = this.comparer.scanResults.added.length;
+          const updated = this.comparer.scanResults.updated.length;
+          const removed = this.comparer.scanResults.removed.length;
+          if (added + updated + removed > 0) {
+            comparerSummary = `与 Apifox 对比：新增 ${added}，更新 ${updated}，删除 ${removed}`;
+            console.log(`\n🚨 ${comparerSummary}`);
           }
         } else {
           if (scanType === 'changed' && this.scanner.getChangedFiles().length > 0) {
-            console.log(`只扫描变更的 ${detectedApis.length} 个接口:`);
+            console.log(`变更文件关联的 Controller 接口: ${detectedApis.length} 个`);
             detectedApis.forEach((api) => {
               console.log(`  ${api.method.toUpperCase()} ${api.path} (${api.controller})`);
             });
-
-            const docToCheck = this.formatter.generateApiDocFromCode(detectedApis);
-            const unformattedCount = this.formatter.countUnformattedChinese(docToCheck);
-            if (unformattedCount > 0) {
-              console.log(`\n需要格式化的接口：${unformattedCount}个接口的字段说明需要格式化为中文`);
-            }
           } else if (scanType === 'all') {
             console.log(`发现接口: ${detectedApis.length}个`);
-            console.log(`接口详情:`);
             detectedApis.forEach((api) => {
               console.log(`  ${api.method.toUpperCase()} ${api.path} (${api.controller})`);
             });
-
-            const docToCheck = this.formatter.generateApiDocFromCode(detectedApis);
-            const unformattedCount = this.formatter.countUnformattedChinese(docToCheck);
-            if (unformattedCount > 0) {
-              console.log(`\n需要格式化的接口：${unformattedCount}个接口的字段说明需要格式化为中文`);
-            }
+          } else if (this.scanner.getChangedFiles().length === 0) {
+            console.log(`无代码变更`);
           } else {
-            console.log(`无接口变更`);
+            console.log(`变更文件中无直接修改的 Controller，需由 LLM 分析间接影响`);
           }
         }
+
+        this.writeSyncPlanDraft(sourcePath, detectedApis, comparerSummary);
       } else {
         const doc = await this.syncer.getOpenApiDoc(sourcePath);
         const apis = this.syncer.extractApisFromDoc(doc);
@@ -365,13 +447,16 @@ class ApifoxSync {
         'api-path': apiPath,
         'api-method': apiMethod,
         apis: apisParam,
+        'sync-plan': syncPlanPath,
       } = args;
 
       let openApiDoc: any;
+      let confirmedPlan: SyncPlan | undefined;
 
       if (sourceType === 'code') {
         if (apisParam) {
           console.log(`启用多接口同步模式: ${apisParam}`);
+          this.scanner.clearChangedFiles();
           openApiDoc = await this.generateMultipleApisDoc(sourcePath, framework, apisParam);
           if (!openApiDoc) {
             console.log('未找到任何指定的接口');
@@ -379,85 +464,43 @@ class ApifoxSync {
           }
         } else if (apiPath && apiMethod) {
           console.log(`启用单独接口同步模式: ${apiMethod.toUpperCase()} ${apiPath}`);
+          this.scanner.clearChangedFiles();
           openApiDoc = await this.generateSingleApiDoc(sourcePath, framework, apiMethod, apiPath);
           if (!openApiDoc) {
             console.log('未找到指定的接口');
             return;
           }
+        } else if (syncMode === 'incremental') {
+          const planFile = syncPlanPath || getDefaultPlanPath();
+          console.log(`从同步计划加载接口: ${planFile}`);
+          const plan = loadSyncPlan(planFile);
+          validateSyncPlanForSync(plan);
+          confirmedPlan = plan;
+
+          console.log(`已确认同步 ${plan.syncApis.length} 个接口（确认时间: ${plan.confirmedAt || '未知'}）`);
+          plan.syncApis.forEach((api) => {
+            console.log(`  ${api.method.toUpperCase()} ${api.path}`);
+          });
+
+          this.scanner.scopeToPlanChangedFiles(plan.changedFiles);
+          const apisFromPlan = syncApisToParam(plan.syncApis);
+          openApiDoc = await this.generateMultipleApisDoc(sourcePath, framework, apisFromPlan);
+          if (!openApiDoc) {
+            console.log('同步计划中的接口在代码中未找到');
+            return;
+          }
+
+          const formattedDoc = this.formatter.formatOpenApiDoc(openApiDoc);
+          this.syncer.saveDocToFile(formattedDoc, 'formatted-api-doc.json');
+          const targetBranch = await this.resolveSyncTargetBranch(args, confirmedPlan, projectId, apiKey);
+          await this.performSync(formattedDoc, projectId, apiKey, syncMode, [], [], targetBranch);
+          return;
         } else {
-          if (syncMode === 'full') {
-            console.log('启用全量更新模式');
-          } else {
-            console.log('启用增量同步模式');
-          }
-
-          if (syncMode === 'incremental') {
-            await this.scanner.detectCodeChanges(sourcePath);
-          }
-
+          console.log('启用全量更新模式');
+          this.scanner.clearChangedFiles();
           const detectedApis = await this.scanner.scanCodeForChanges(sourcePath, framework);
           this.formatter.setDtoSchemas(this.scanner.getDtoSchemas());
-
-          const changeImpact = this.scanner.getChangeSourceImpact();
-          this.handleChangeImpact(changeImpact, detectedApis);
-
           openApiDoc = this.formatter.generateApiDocFromCode(detectedApis);
-
-          if (syncMode === 'incremental' && !args['api-path']) {
-            // 如果连接到 Apifox 项目，比较接口变化
-            if (args['apifox-project-id'] && args['apifox-api-key']) {
-              const existingApis = await this.syncer.getApifoxExistingApis(projectId, apiKey);
-              this.comparer.compareApiChanges(detectedApis, existingApis, syncMode === 'incremental');
-
-              if (
-                this.comparer.scanResults.added.length > 0 ||
-                this.comparer.scanResults.updated.length > 0 ||
-                this.comparer.scanResults.removed.length > 0
-              ) {
-                const readline = require('readline');
-                const rl = readline.createInterface({
-                  input: process.stdin,
-                  output: process.stdout,
-                });
-
-                rl.question('\n是否继续同步以上接口变更？(y/N): ', (answer: string) => {
-                  if (answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes') {
-                    rl.close();
-                    const formattedDoc = this.formatter.formatOpenApiDoc(openApiDoc);
-                    this.performSync(formattedDoc, projectId, apiKey, syncMode, detectedApis, existingApis);
-                  } else {
-                    console.log('\n同步已取消');
-                    rl.close();
-                    process.exit(0);
-                  }
-                });
-
-                return;
-              } else {
-                console.log('无接口变更，无需同步');
-                return;
-              }
-            } else {
-              // 如果没有连接到 Apifox 项目，生成并格式化接口文档
-              console.log('未连接到 Apifox 项目，将生成并格式化接口文档');
-              console.log(`发现接口: ${detectedApis.length}个`);
-              console.log('接口详情:');
-              detectedApis.forEach((api) => {
-                console.log(`  ${api.method.toUpperCase()} ${api.path} (${api.controller})`);
-                if (api.parameters && api.parameters.length > 0) {
-                  console.log(
-                    `    参数: ${api.parameters.map((param) => param.name + '(' + param.type + ')').join(', ')}`,
-                  );
-                }
-              });
-
-              // 生成并格式化接口文档
-              const formattedDoc = this.formatter.formatOpenApiDoc(openApiDoc);
-              this.syncer.saveDocToFile(formattedDoc, 'apifox-full-api-doc.json');
-              console.log('接口文档已生成并格式化，保存到 apifox-full-api-doc.json 文件');
-              return;
-            }
-          }
         }
       } else {
         const originalDoc = await this.syncer.getOpenApiDoc(sourcePath);
@@ -467,7 +510,8 @@ class ApifoxSync {
       const formattedDoc = this.formatter.formatOpenApiDoc(openApiDoc);
       this.syncer.saveDocToFile(formattedDoc, 'formatted-api-doc.json');
 
-      this.performSync(formattedDoc, projectId, apiKey, syncMode);
+      const targetBranch = await this.resolveSyncTargetBranch(args, confirmedPlan, projectId, apiKey);
+      await this.performSync(formattedDoc, projectId, apiKey, syncMode, [], [], targetBranch);
     } catch (error) {
       console.error('\nError: 同步过程中发生意外错误');
       console.error((error as any).stack);
@@ -481,12 +525,6 @@ class ApifoxSync {
   async generateSingleApiDoc(sourcePath: string, framework: string, method: string, apiPath: string): Promise<any> {
     const detectedApis = await this.scanner.scanCodeForChanges(sourcePath, framework);
     this.formatter.setDtoSchemas(this.scanner.getDtoSchemas());
-
-    const tracedFiles = this.scanner.getDependencyTracedFiles();
-    if (tracedFiles.length > 0) {
-      console.log(`其中 ${tracedFiles.length} 个 Controller 因 DTO/Service 依赖变更而被纳入扫描:`);
-      tracedFiles.forEach((file) => console.log(`  - ${path.basename(file)}`));
-    }
 
     const targetApi = detectedApis.find(
       (api) =>
@@ -510,12 +548,6 @@ class ApifoxSync {
   async generateMultipleApisDoc(sourcePath: string, framework: string, apisParam: string): Promise<any> {
     const detectedApis = await this.scanner.scanCodeForChanges(sourcePath, framework);
     this.formatter.setDtoSchemas(this.scanner.getDtoSchemas());
-
-    const tracedFiles = this.scanner.getDependencyTracedFiles();
-    if (tracedFiles.length > 0) {
-      console.log(`其中 ${tracedFiles.length} 个 Controller 因 DTO/Service 依赖变更而被纳入扫描:`);
-      tracedFiles.forEach((file) => console.log(`  - ${path.basename(file)}`));
-    }
 
     const apiList = apisParam
       .split(',')
@@ -576,14 +608,22 @@ class ApifoxSync {
     syncMode: string,
     detectedApis: any[] = [],
     existingApis: any[] = [],
+    targetBranch?: ApifoxBranch,
   ): Promise<void> {
     try {
       // 如果连接到 Apifox 项目，同步接口
       if (projectId && apiKey) {
-        await this.syncer.syncToApifox(formattedDoc, projectId, apiKey);
+        const targetBranchId = targetBranch ? branchToTargetBranchId(targetBranch) : undefined;
+        await this.syncer.syncToApifox(formattedDoc, projectId, apiKey, undefined, {
+          targetBranchId,
+          targetBranchName: targetBranch ? formatBranchUserLabel(targetBranch) : undefined,
+        });
 
         console.log('\n=== 同步完成 ===');
         console.log('✅ 后端接口已成功同步到 Apifox');
+        if (targetBranch) {
+          console.log(`✅ 目标分支: ${formatBranchUserLabel(targetBranch)}`);
+        }
         console.log('✅ 所有字段说明已格式化为中文');
 
         if (
@@ -647,9 +687,10 @@ async function main(): Promise<void> {
   const syncInstance = new ApifoxSync();
 
   if (command === 'mcp') {
-    // 启动 MCP 交互式控制台
     const { spawn } = require('child_process');
-    const mcpProcess = spawn('node', ['src/mcp/mcp-server.js', ...process.argv.slice(3)], {
+    const mcpServerPath = path.join(__dirname, 'mcp', 'mcp-server.js');
+    const mcpArgs = process.argv.slice(3);
+    const mcpProcess = spawn('node', [mcpServerPath, ...mcpArgs], {
       stdio: 'inherit',
       shell: true,
     });
@@ -738,6 +779,15 @@ async function main(): Promise<void> {
     }
   } else if (command === 'scan') {
     await syncInstance.scan();
+  } else if (command === 'branches') {
+    try {
+      await syncInstance.listBranches();
+    } catch (error) {
+      console.error((error as Error).message);
+      process.exit(1);
+    }
+  } else if (command === 'workflow') {
+    await syncInstance.workflow();
   } else if (command === 'sync') {
     await syncInstance.sync();
   } else if (command === 'help' || command === '--help' || command === '-h') {

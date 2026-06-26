@@ -1,5 +1,7 @@
 # Basecase 管理
 
+> **已归档**：依赖图（DependencyGraph）静态追踪已移除，变更影响分析改由 LLM 完成。以下内容仅供历史参考。
+
 ## 问题记录
 
 ### BusinessProjectIndex 误报问题

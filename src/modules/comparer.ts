@@ -1,4 +1,5 @@
 import { normalizePath } from '../utils/helper';
+import { diffParamNames } from '../utils/apiParamFilter';
 import { ApiInfo } from '../types';
 
 class ApiComparer {
@@ -109,17 +110,9 @@ class ApiComparer {
       hasChanges = true;
     }
 
-    // 比较接口的参数列表
-    if (detectedApi.parameters && existingApi.parameters) {
-      const detectedParamNames = new Set(detectedApi.parameters.map((p) => p.name));
-      const existingParamNames = new Set(existingApi.parameters!.map((p) => p.name));
-      const paramDiff = [...detectedParamNames]
-        .filter((x) => !existingParamNames.has(x))
-        .concat([...existingParamNames].filter((x) => !detectedParamNames.has(x)));
-      if (paramDiff.length > 0) {
-        hasChanges = true;
-      }
-    } else if (detectedApi.parameters || existingApi.parameters) {
+    // 比较接口的参数列表（忽略全局 Header 鉴权参数）
+    const paramDiff = diffParamNames(detectedApi.parameters, existingApi.parameters);
+    if (paramDiff.added.length > 0 || paramDiff.removed.length > 0) {
       hasChanges = true;
     }
 
@@ -145,9 +138,12 @@ class ApiComparer {
       const existingNormalized = existingApi.returnType.toLowerCase();
 
       const isExistingGeneric = existingNormalized === 'object' || existingNormalized === 'array';
+      const isDetectedGeneric = detectedNormalized === 'object' || detectedNormalized === 'array';
       const isTypeMappingMatch = javaToOpenApiTypeMap[detectedApi.returnType] === existingNormalized;
+      const isObjectVsWrapper =
+        (isExistingGeneric && !isDetectedGeneric) || (isDetectedGeneric && !isExistingGeneric);
 
-      if (!isExistingGeneric && !isTypeMappingMatch && detectedNormalized !== existingNormalized) {
+      if (!isObjectVsWrapper && !isTypeMappingMatch && detectedNormalized !== existingNormalized) {
         hasChanges = true;
       }
     }
@@ -283,31 +279,21 @@ class ApiComparer {
     }
 
     // 比较接口的参数列表
-    if (detectedApi.parameters && existingApi.parameters) {
-      const detectedParamNames = new Set(detectedApi.parameters.map((p) => p.name));
-      const existingParamNames = new Set(existingApi.parameters!.map((p) => p.name));
-
-      const addedParams = [...detectedParamNames].filter((x) => !existingParamNames.has(x));
-      const removedParams = [...existingParamNames].filter((x) => !detectedParamNames.has(x));
-
-      if (addedParams.length > 0) {
-        changes.push(`新增参数: ${addedParams.join(', ')}`);
-      }
-
-      if (removedParams.length > 0) {
-        changes.push(`删除参数: ${removedParams.join(', ')}`);
-      }
-    } else if (detectedApi.parameters || existingApi.parameters) {
-      if (detectedApi.parameters) {
-        changes.push(`新增参数: ${detectedApi.parameters.map((p) => p.name).join(', ')}`);
-      } else {
-        changes.push(`删除参数: ${existingApi.parameters!.map((p) => p.name).join(', ')}`);
-      }
+    const paramDiff = diffParamNames(detectedApi.parameters, existingApi.parameters);
+    if (paramDiff.added.length > 0) {
+      changes.push(`新增参数: ${paramDiff.added.join(', ')}`);
+    }
+    if (paramDiff.removed.length > 0) {
+      changes.push(`删除参数: ${paramDiff.removed.join(', ')}`);
     }
 
     // 比较接口的响应内容（如果有的话）
     if (detectedApi.returnType && existingApi.returnType && detectedApi.returnType !== existingApi.returnType) {
-      changes.push(`返回类型: 从 ${existingApi.returnType} 变为 ${detectedApi.returnType}`);
+      const existingNormalized = existingApi.returnType.toLowerCase();
+      const isGeneric = existingNormalized === 'object' || existingNormalized === 'array';
+      if (!isGeneric) {
+        changes.push(`返回类型: 从 ${existingApi.returnType} 变为 ${detectedApi.returnType}`);
+      }
     }
 
     // 比较接口的描述

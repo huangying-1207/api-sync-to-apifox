@@ -12,10 +12,14 @@ yarn-error.log*
 *.tmp
 *.temp
 temp/
+*.stackdump
+*scan-debug.txt
 
 # Configuration files
+.apifox/
 .apifoxsync.json
 .apifox-credentials.json
+scripts/skill-targets.json
 .env
 .env.local
 .env.*.local

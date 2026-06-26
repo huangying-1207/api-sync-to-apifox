@@ -205,7 +205,13 @@ class ApifoxSyncer {
   /**
    * 同步 API 文档到 Apifox
    */
-  async syncToApifox(doc: any, projectId: string, apiKey: string, projectName?: string): Promise<any> {
+  async syncToApifox(
+    doc: any,
+    projectId: string,
+    apiKey: string,
+    projectName?: string,
+    syncOptions?: { targetBranchId?: number; targetBranchName?: string },
+  ): Promise<any> {
     let actualProjectId = projectId;
     let actualApiKey = apiKey;
 
@@ -223,19 +229,29 @@ class ApifoxSyncer {
       console.log(`正在同步 API 文档到 Apifox 项目: ${actualProjectId}`);
     }
 
+    const importOptions: Record<string, unknown> = {
+      endpointOverwriteBehavior: 'OVERWRITE_EXISTING',
+      schemaOverwriteBehavior: 'OVERWRITE_EXISTING',
+      updateFolderOfChangedEndpoint: false,
+      prependBasePath: false,
+      deleteUnmatchedResources: false,
+    };
+
+    if (syncOptions?.targetBranchId !== undefined) {
+      importOptions.targetBranchId = syncOptions.targetBranchId;
+      const branchLabel = syncOptions.targetBranchName || `ID ${syncOptions.targetBranchId}`;
+      console.log(`目标 Apifox 分支: ${branchLabel}`);
+    } else {
+      console.log('目标 Apifox 分支: main（主分支，默认）');
+    }
+
     try {
       const response = await retryRequest(() =>
         axios.post(
           `${this.baseUrl}/v1/projects/${actualProjectId}/import-openapi`,
           {
             input: JSON.stringify(doc),
-            options: {
-              endpointOverwriteBehavior: 'OVERWRITE_EXISTING',
-              schemaOverwriteBehavior: 'OVERWRITE_EXISTING',
-              updateFolderOfChangedEndpoint: false,
-              prependBasePath: false,
-              deleteUnmatchedResources: false,
-            },
+            options: importOptions,
           },
           {
             headers: {

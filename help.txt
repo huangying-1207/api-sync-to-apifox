@@ -20,6 +20,29 @@ API 同步到 Apifox 工具使用帮助
   --framework <springboot|nodejs|django> 后端框架（source-type 为 code 时必填）
   --scan-type <all|changed>             扫描类型（默认: changed）
 
+### branches
+查询当前 Apifox 项目的迭代分支列表（确认同步前使用）
+
+用法：
+  api-sync-to-apifox branches [参数]
+
+参数：
+  --project-name <名称>                 MCP 项目名称
+  --apifox-project-id <ID>              Apifox 项目 ID
+  --apifox-api-key <密钥>               Apifox API 密钥
+  --json                                输出 JSON（含分支 ID，供 Agent 写入同步计划）
+  --refresh-branches                    忽略缓存，强制重新查询分支
+
+### workflow
+一键工作流：scan + branches（不执行 sync）
+
+用法：
+  api-sync-to-apifox workflow [参数]
+
+产出：
+  - temp/apifox-sync-plan.json（status: pending，作废旧确认）
+  - temp/apifox-workflow-summary.json（含 scan 候选 + 分支列表）
+
 ### sync
 同步后端接口到 Apifox
 
@@ -34,6 +57,10 @@ API 同步到 Apifox 工具使用帮助
   --source-path <路径>                  源路径（必填）
   --framework <springboot|nodejs|django> 后端框架（source-type 为 code 时必填）
   --sync-mode <incremental|full>        同步模式（默认: incremental）
+  --sync-plan <路径>                    同步计划文件（默认: temp/apifox-sync-plan.json）
+  --apifox-branch-id <ID>               指定 Apifox 迭代分支 ID
+  --apifox-branch-name <名称>            指定 Apifox 分支名称（推荐）
+  --no-branch-prompt                    跳过交互式分支选择，使用默认主分支
   --trigger-mode <auto|manual>          触发模式（默认: auto）
   --api-method <方法>                    单独接口同步的 HTTP 方法
   --api-path <路径>                      单独接口同步的路径
@@ -56,5 +83,17 @@ MCP 命令：
 
 ## 同步模式
 
-  incremental  增量同步，只同步 Git 变更的接口（默认）
+  incremental  增量同步，仅同步 apifox-sync-plan.json 中已确认的 syncApis（默认）
   full         全量更新，同步所有接口
+
+## Apifox 分支
+
+  同步前会查询项目分支列表，按**分支名称**让用户选择，默认主分支。
+  用户界面通常看不到分支 ID，因此确认时只需回复分支名（如 `master`、`dev`）。
+
+  查询分支：
+    node dist/index.js branches --json
+
+  确认同步时，将用户选择的分支名和对应 id 写入 apifox-sync-plan.json：
+
+    "targetBranch": { "id": 1234568, "name": "dev", "isMain": false }

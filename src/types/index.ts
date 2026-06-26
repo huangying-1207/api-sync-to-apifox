@@ -44,84 +44,55 @@ export interface ApiDocument {
   };
 }
 
-/** Java 类解析结果 */
-export interface ClassInfo {
-  name: string;
-  file: string;
-  isController: boolean;
-  isService: boolean;
-  fields: Record<string, string>;
-  extendsClass: string | null;
-  implementsInterfaces: string[];
-  methods: MethodInfo[];
-  injectedFields: Record<string, string>;
-}
-
-/** Java 方法解析结果 */
-export interface MethodInfo {
-  name: string;
-  returnType: string;
-  parameterTypes: string[];
-  requestBodyType?: string;
-  calls: string[];
-  putFields: Record<string, any>;
-  dataCalls: string[];
-  /** 方法体内 new ClassName() 构造调用 */
-  constructorCalls: string[];
-  /** 方法体中按类型分组的字段访问（TypeName → [fieldName, ...]），用于构造调用追踪时的字段级过滤 */
-  typedFieldAccesses: Record<string, string[]>;
-  /** 方法体中的 BeanUtils.copyProperties 调用（sourceVar → targetVar） */
-  copyPropertiesCalls: Array<{ sourceVar: string; targetVar: string }>;
-  /** 方法体中的类型转换调用（如 JSONObject.toJSON(dto), JSON.parseObject(str, Type.class)） */
-  typeConversionCalls: Array<{
-    sourceVar: string;
-    sourceType: string;
-    conversionMethod: string;
-    targetTypeName: string;
-    resultVar?: string;
-    flowsToReturn: boolean;
-  }>;
-}
-
-/** 字段级变更（git diff 检测） */
-export interface FieldChange {
-  className: string;
-  file: string;
-  addedFields: string[];
-  removedFields: string[];
-  changedFields: string[];
-}
-
-/** 变更点（反向追踪起点） */
-export interface ChangePoint {
-  className: string;
-  changeType: 'field' | 'method' | 'put_fields';
-  methodName?: string;
-  changeDetail?: string;
-}
-
-/** 受影响的 Controller 方法 */
-export interface AffectedControllerMethod {
-  controllerFile: string;
-  controllerClass: string;
-  methodName: string;
-  tracePath: string[];
-  /** 触发此追踪的变更源类名 */
-  changeSource: string;
-  /** 变更类型 */
-  changeType: 'field' | 'method' | 'put_fields';
-  /** 变更详情（如字段增删） */
-  changeDetail?: string;
-  /** 影响类型：入参受影响 / 响应受影响 */
-  impactType: 'request_body' | 'response';
-}
-
 export interface FrameworkConfig {
   name: string;
   filePattern: string;
   methodPatterns: { [key: string]: RegExp };
   classPathPattern?: RegExp;
   fileExts: string[];
+}
+
+export interface SyncPlanApi {
+  method: string;
+  path: string;
+  controllerClass?: string;
+  javaMethodName?: string;
+  impactType?: 'request_body' | 'response';
+  changeSummary?: string;
+}
+
+export interface SyncPlanExcludedApi {
+  method: string;
+  path: string;
+  reason: string;
+}
+
+export interface ApifoxBranch {
+  id?: number;
+  name: string;
+  isMain?: boolean;
+  isArchived?: boolean;
+  type?: string;
+}
+
+export interface SyncPlan {
+  version: 1;
+  status: 'pending' | 'confirmed';
+  generatedAt: string;
+  changedFiles: string[];
+  gitDiff?: string;
+  analysis: {
+    summary: string;
+    affectedApis: SyncPlanApi[];
+    excludedApis?: SyncPlanExcludedApi[];
+  };
+  syncApis: Array<{ method: string; path: string }>;
+  userConfirmed: boolean;
+  confirmedAt?: string;
+  /** 同步目标 Apifox 分支，确认同步前由用户/Agent 指定 */
+  targetBranch?: ApifoxBranch;
+  /** scan 阶段直接扫描到的 Controller 接口（LLM 分析前的候选） */
+  scanCandidates?: SyncPlanApi[];
 }
 
 export interface Config {
@@ -137,6 +108,11 @@ export interface Config {
   'api-path'?: string;
   'api-method'?: string;
   apis?: string;
+  'sync-plan'?: string;
+  /** Apifox 迭代分支 ID，不填则同步到主分支 */
+  'apifox-branch-id'?: number;
+  /** 可选分支列表，用于同步前选择；可在 Apifox「管理迭代分支」中查看 ID */
+  'apifox-branches'?: ApifoxBranch[];
 }
 
 export interface ProjectConnectionInfo {

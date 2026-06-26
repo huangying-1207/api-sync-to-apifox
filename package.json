@@ -20,6 +20,9 @@
     "init": "node dist/index.js config init",
     "scan": "node dist/index.js scan",
     "sync": "node dist/index.js sync",
+  "workflow": "node dist/index.js workflow",
+  "branches": "node dist/index.js branches",
+    "sync-skill": "node scripts/sync-skill.js",
     "config": "node dist/index.js config",
     "lint": "eslint src/**/*.ts",
     "lint:fix": "eslint src/**/*.ts --fix",
@@ -36,6 +39,9 @@
     "ora": "^8.0.1",
     "update-notifier": "^7.0.0",
     "yaml": "^2.3.0"
+  },
+  "optionalDependencies": {
+    "apifox-cli": "2.2.4"
   },
   "keywords": [
     "apifox",

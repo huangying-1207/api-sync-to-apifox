@@ -1,0 +1,11 @@
+{
+  "targets": [
+    {
+      "name": "my-backend",
+      "projectRoot": "D:/IDEA/my-backend-project",
+      "sourcePath": "./src/main/java",
+      "framework": "springboot",
+      "description": "用 LLM 分析后端代码变更对 API 的影响并同步到 Apifox。当用户提到接口同步、Apifox 时使用。"
+    }
+  ]
+}
