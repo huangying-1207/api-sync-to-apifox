@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { sync as globSync } from 'glob';
 import { ApiInfo } from '../../types';
+import { extractResponseFieldNamesFromApi } from '../../utils/openapi/openapiWalk';
 import { isTestOrNonApiSourceFile } from './frameworks';
 
 /** Spring Boot Controller / DTO 解析逻辑 */
@@ -289,29 +290,7 @@ export class SpringBootParser {
       }
     }
 
-    api.responseFields = this.extractResponseFieldNames(api, dtoSchemas);
-  }
-
-  extractResponseFieldNames(api: ApiInfo, dtoSchemas: Record<string, any>): string[] {
-    const fields: string[] = [];
-
-    if (api.mapFields && Object.keys(api.mapFields).length > 0) {
-      fields.push(...Object.keys(api.mapFields));
-    }
-
-    const dtoType = api.baseType || api.returnType;
-    if (dtoType) {
-      const genericMatch = dtoType.match(/^(?:List|Set|Collection)<(.+)>$/);
-      const typeName = genericMatch ? genericMatch[1] : dtoType;
-
-      if (dtoSchemas[typeName]) {
-        for (const f of Object.keys(dtoSchemas[typeName])) {
-          if (!fields.includes(f)) fields.push(f);
-        }
-      }
-    }
-
-    return fields;
+    api.responseFields = extractResponseFieldNamesFromApi(api, dtoSchemas);
   }
 }
 

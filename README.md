@@ -44,9 +44,29 @@ node dist/index.js sync --project-name <项目名> --source-type code --source-p
 | `config init [参数]` | 初始化配置文件，支持 `--source-path`、`--framework` |
 | `scan` | 扫描接口变更（不执行同步） |
 | `sync` | 扫描并同步接口到 Apifox |
-| `mcp` | 启动 MCP 交互式控制台 |
+| `workflow` | 一键工作流：scan + branches |
+| `branches` | 列出 Apifox 迭代分支（`--json` 机器可读） |
+| `mcp` | 启动 MCP 交互式控制台（支持 `scan`/`sync` 子命令） |
 
-详细参数说明请执行 `--help` 查看。
+通用选项：`--quiet` 减少日志、`--json` JSON 输出、`--project-name` 使用 MCP 已连接项目。
+
+详细参数说明请执行 `help` 或各子命令 `--help` 查看。
+
+## 项目结构
+
+```
+src/
+├── index.ts              # CLI 入口
+├── cli/                  # program、app、options、help
+├── clients/              # Apifox HTTP 客户端
+├── core/                 # pipeline、scanner
+├── modules/              # comparer、formatter、syncer
+├── mcp/                  # MCP 控制台与凭据管理
+├── types/                # 类型定义
+└── utils/                # git、logger、openapi、apifox 工具
+```
+
+临时产物写入项目根目录 `temp/`（已 gitignore）。
 
 ## 配置
 
@@ -55,7 +75,7 @@ node dist/index.js sync --project-name <项目名> --source-type code --source-p
 | 配置项 | 必填 | 说明 | 可选值 | 默认值 |
 |--------|------|------|--------|--------|
 | source-type | 是 | 数据源类型 | `swagger` \| `code` | `code` |
-| source-path | 是 | 源路径（代码目录或 Swagger URL） | - | `./src` |
+| source-path | 是 | 源路径（代码目录、Swagger URL 或本地 OpenAPI 文件） | - | `./src` |
 | framework | 条件必填 | 后端框架（source-type 为 code 时） | `springboot` \| `nodejs` \| `django` | `springboot` |
 | sync-mode | 否 | 同步模式 | `incremental` \| `full` | `incremental` |
 | scan-type | 否 | 扫描类型 | `all` \| `changed` | `changed` |
@@ -95,6 +115,8 @@ node dist/index.js mcp
 | `connect <名称> <项目ID> <API密钥>` | 连接 Apifox 项目 |
 | `disconnect <名称>` | 断开连接 |
 | `status` | 显示连接状态 |
+| `scan [项目名] [--参数...]` | 扫描接口变更 |
+| `sync [项目名] [--参数...]` | 同步到 Apifox |
 | `apis <名称>` | 获取项目接口列表 |
 | `info <名称>` | 显示项目详情 |
 | `help` | 显示帮助 |
@@ -156,11 +178,12 @@ npm run sync-skill -- --list                # 查看配置列表
 
 ```bash
 npm run build        # 编译 TS → dist/
+npm run check        # 构建 + 测试
 npm run watch        # 监听模式编译
 npm run lint         # ESLint 检查
 npm run lint:fix     # ESLint 自动修复
 npm run format       # Prettier 格式化
-npm run test         # 运行测试
+npm run test         # 运行测试（pretest 自动 build）
 ```
 
 ## 获取 Apifox 项目信息

@@ -2,11 +2,21 @@
 
 import readline from 'readline';
 import apifoxMCP from './apifox';
+import { ApifoxSyncApp } from '../cli/app';
+import { resolveCliArgs, validateCliArgs } from '../utils/cliArgs';
 
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
 });
+
+function mcpArgsToCliArgs(args: string[]) {
+  let argv = args;
+  if (args.length > 0 && !args[0].startsWith('--')) {
+    argv = ['--project-name', args[0], ...args.slice(1)];
+  }
+  return resolveCliArgs({}, argv);
+}
 
 class MCPCommandHandler {
   private commands: any;
@@ -22,6 +32,8 @@ class MCPCommandHandler {
       documents: this.handleGetDocuments.bind(this),
       environments: this.handleGetEnvironments.bind(this),
       variables: this.handleGetVariables.bind(this),
+      scan: this.handleScan.bind(this),
+      sync: this.handleSync.bind(this),
       help: this.handleHelp.bind(this),
     };
   }
@@ -213,6 +225,28 @@ class MCPCommandHandler {
     }
   }
 
+  async handleScan(args: string[]): Promise<void> {
+    try {
+      const cliArgs = mcpArgsToCliArgs(args);
+      validateCliArgs(cliArgs, 'scan');
+      await new ApifoxSyncApp().scan(cliArgs);
+    } catch (error) {
+      console.error('scan 失败:', (error as Error).message);
+      process.exitCode = 1;
+    }
+  }
+
+  async handleSync(args: string[]): Promise<void> {
+    try {
+      const cliArgs = mcpArgsToCliArgs(args);
+      validateCliArgs(cliArgs, 'sync');
+      await new ApifoxSyncApp().sync(cliArgs);
+    } catch (error) {
+      console.error('sync 失败:', (error as Error).message);
+      process.exitCode = 1;
+    }
+  }
+
   handleHelp(): void {
     console.log('');
     console.log('Apifox MCP 命令列表:');
@@ -225,7 +259,9 @@ class MCPCommandHandler {
     console.log('apis <项目名>                        - 获取项目接口列表');
     console.log('documents <项目名>                   - 获取项目文档列表');
     console.log('environments <项目名>                - 获取项目环境配置');
-    console.log('variables <项目名>                   - 获取项目变量配置');
+    console.log('variables <项目名>                - 获取项目变量配置');
+    console.log('scan [项目名] [scan 参数...]        - 扫描接口变更（同 CLI scan）');
+    console.log('sync [项目名] [sync 参数...]        - 同步接口到 Apifox（同 CLI sync）');
     console.log('help                                 - 显示帮助信息');
     console.log('');
     console.log('输入 exit 或 quit 退出');
@@ -241,6 +277,7 @@ class MCPInteractiveInterface {
 
   start(): void {
     console.log('=== Apifox MCP 交互式控制台 ===');
+    apifoxMCP.loadCredentials(true);
     console.log('输入 help 查看可用命令');
     console.log('');
 

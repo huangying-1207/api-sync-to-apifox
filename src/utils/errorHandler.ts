@@ -64,23 +64,6 @@ export class ErrorHandler {
   }
 
   /**
-   * 处理配置错误
-   */
-  static handleConfigError(error: any) {
-    console.error('❌ 配置错误');
-    console.error(`错误信息: ${error.message}`);
-
-    if (error.type === 'missing_field') {
-      console.error(`缺少配置字段: ${error.field}`);
-    } else if (error.type === 'invalid_value') {
-      console.error(`无效的配置值: ${error.field} = ${error.value}`);
-    }
-
-    console.error('请检查 .apifoxsync.json 配置文件');
-    console.error(`错误堆栈: ${error.stack}`);
-  }
-
-  /**
    * 处理代码扫描错误
    */
   static handleScanError(error: any, sourcePath: string) {
@@ -91,26 +74,6 @@ export class ErrorHandler {
       ENOENT: '  - 源代码目录不存在',
       EACCES: '  - 无法访问源代码目录',
       ENOTDIR: '  - 路径不是有效的目录',
-    };
-
-    if (errorCodes[error.code]) {
-      console.error(errorCodes[error.code]);
-    }
-
-    console.error(`错误堆栈: ${error.stack}`);
-  }
-
-  /**
-   * 处理同步错误
-   */
-  static handleSyncError(error: any, apiInfo: string) {
-    console.error(`❌ 接口同步失败: ${apiInfo}`);
-    console.error(`错误信息: ${error.message}`);
-
-    const errorCodes: Record<string, string> = {
-      API_RATE_LIMIT: '  - API 请求频率超限，请稍后重试',
-      API_CONNECTION: '  - 无法连接到 Apifox 服务器',
-      TIMEOUT: '  - 请求超时，请检查网络连接',
     };
 
     if (errorCodes[error.code]) {

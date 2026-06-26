@@ -19,6 +19,8 @@ API 同步到 Apifox 工具使用帮助
   --source-path <路径>                  源路径，代码目录或 Swagger URL（必填）
   --framework <springboot|nodejs|django> 后端框架（source-type 为 code 时必填）
   --scan-type <all|changed>             扫描类型（默认: changed）
+  --quiet                               减少日志输出
+  --json                                JSON 格式输出
 
 ### branches
 查询当前 Apifox 项目的迭代分支列表（确认同步前使用）
@@ -65,6 +67,8 @@ API 同步到 Apifox 工具使用帮助
   --api-method <方法>                    单独接口同步的 HTTP 方法
   --api-path <路径>                      单独接口同步的路径
   --apis <接口列表>                      多接口同步，格式: "GET:/api/users,POST:/api/users"
+  --quiet                               减少日志输出
+  --json                                JSON 格式输出（branches 等）
 
 ### mcp
 启动 MCP 交互式控制台
@@ -76,6 +80,8 @@ MCP 命令：
   connect <名称> <项目ID> <API密钥>     连接 Apifox 项目
   disconnect <名称>                      断开连接
   status                                 显示连接状态
+  scan [项目名] [--参数...]              扫描接口变更（等同 CLI scan）
+  sync [项目名] [--参数...]              同步到 Apifox（等同 CLI sync）
   apis <名称>                            获取项目接口列表
   info <名称>                            显示项目详情
   help                                   显示帮助

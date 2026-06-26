@@ -9,7 +9,9 @@
   "scripts": {
     "build": "tsc",
     "watch": "tsc --watch",
+    "pretest": "npm run build",
     "test": "mocha test/**/*.test.js --reporter spec",
+    "check": "npm run build && npm test",
     "test:dev": "mocha test/**/*.test.js --reporter spec --watch-extensions ts,js --watch",
     "test:helper": "mocha test/helper.test.js --reporter spec",
     "test:error": "mocha test/errorHandler.test.js --reporter spec",
@@ -20,14 +22,14 @@
     "init": "node dist/index.js config init",
     "scan": "node dist/index.js scan",
     "sync": "node dist/index.js sync",
-  "workflow": "node dist/index.js workflow",
-  "branches": "node dist/index.js branches",
+    "workflow": "node dist/index.js workflow",
+    "branches": "node dist/index.js branches",
     "sync-skill": "node scripts/sync-skill.js",
     "config": "node dist/index.js config",
     "lint": "eslint src/**/*.ts",
     "lint:fix": "eslint src/**/*.ts --fix",
     "format": "prettier --write src/**/*.ts",
-    "clean": "rm -rf dist",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {

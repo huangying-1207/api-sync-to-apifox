@@ -96,14 +96,18 @@ export class ConfigValidator {
       });
     }
 
-    // 验证源路径格式
+    // 验证源路径格式（支持 URL 或本地文件路径）
     if (config['source-type'] === 'swagger' && config['source-path']) {
-      if (!config['source-path'].startsWith('http://') && !config['source-path'].startsWith('https://')) {
+      const p = config['source-path'];
+      const isUrl = p.startsWith('http://') || p.startsWith('https://');
+      const isLocal =
+        p.startsWith('./') || p.startsWith('../') || p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p);
+      if (!isUrl && !isLocal) {
         errors.push({
           type: 'invalid_value',
           field: 'source-path',
-          value: config['source-path'],
-          message: 'Swagger 源路径必须是有效的 URL',
+          value: p,
+          message: 'Swagger 源路径必须是 URL 或本地文件路径',
         });
       }
     }

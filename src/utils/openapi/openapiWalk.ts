@@ -1,4 +1,26 @@
-import { ApiInfo } from '../../types';
+import { ApiInfo, DtoSchemaMap } from '../../types';
+
+/** 从 Java 扫描结果（mapFields + DTO Schema）提取响应字段名 */
+export function extractResponseFieldNamesFromApi(api: ApiInfo, dtoSchemas: DtoSchemaMap = {}): string[] {
+  const fields: string[] = [];
+
+  if (api.mapFields && Object.keys(api.mapFields).length > 0) {
+    fields.push(...Object.keys(api.mapFields));
+  }
+
+  const dtoType = api.baseType || api.returnType;
+  if (dtoType) {
+    const genericMatch = dtoType.match(/^(?:List|Set|Collection)<(.+)>$/);
+    const typeName = genericMatch ? genericMatch[1] : dtoType;
+    if (dtoSchemas[typeName]) {
+      for (const fieldName of Object.keys(dtoSchemas[typeName])) {
+        if (!fields.includes(fieldName)) fields.push(fieldName);
+      }
+    }
+  }
+
+  return fields;
+}
 
 /** 从 OpenAPI schema 中提取响应字段名（优先 data 包装体内的业务字段） */
 export function extractResponseFieldNamesFromSchema(schema: any, componentSchemas?: any): string[] {

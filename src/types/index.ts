@@ -97,6 +97,51 @@ export interface Config {
   'sync-plan'?: string;
   /** Apifox 迭代分支 ID，不填则同步到主分支 */
   'apifox-branch-id'?: number;
+  /** Apifox 分支名称 */
+  'apifox-branch-name'?: string;
   /** 可选分支列表，用于同步前选择；可在 Apifox「管理迭代分支」中查看 ID */
   'apifox-branches'?: ApifoxBranch[];
 }
+
+/** CLI 运行时参数（配置文件 + 命令行合并后） */
+export interface CliArgs extends Partial<Config> {
+  quiet?: boolean;
+  json?: boolean;
+  help?: boolean;
+  'refresh-branches'?: boolean;
+  'no-branch-prompt'?: boolean;
+}
+
+export interface OpenApiDocument {
+  openapi: string;
+  info: { title: string; version: string; description?: string };
+  paths: Record<string, Record<string, OpenApiOperation>>;
+  components?: {
+    schemas?: Record<string, OpenApiSchema>;
+    parameters?: Record<string, OpenApiSchema>;
+  };
+}
+
+export interface OpenApiOperation {
+  summary?: string;
+  description?: string;
+  parameters?: OpenApiParameter[];
+  requestBody?: { content?: Record<string, { schema?: OpenApiSchema }> };
+  responses?: Record<string, { description?: string; content?: Record<string, { schema?: OpenApiSchema }> }>;
+}
+
+export interface OpenApiParameter {
+  name: string;
+  in?: string;
+  description?: string;
+}
+
+export interface OpenApiSchema {
+  type?: string;
+  description?: string;
+  properties?: Record<string, OpenApiSchema>;
+  items?: OpenApiSchema;
+  $ref?: string;
+}
+
+export type DtoSchemaMap = Record<string, Record<string, string>>;

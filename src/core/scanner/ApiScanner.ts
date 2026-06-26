@@ -7,6 +7,8 @@ import path from 'path';
 import { sync as globSync } from 'glob';
 import { ApiInfo } from '../../types';
 import { ErrorHandler } from '../../utils/errorHandler';
+import { findGitRoot, getGitChangedFiles } from '../../utils/git';
+import { appLog, appWarn } from '../../utils/logger';
 import { FRAMEWORK_CONFIGS, isTestOrNonApiSourceFile } from './frameworks';
 import { springBootParser } from './springbootParser';
 
@@ -16,50 +18,22 @@ export class ApiScanner {
   private changedFiles: string[] = [];
   private dtoSchemas: Record<string, any> = {};
 
-  private findGitRoot(dir: string): string {
-    let current = path.resolve(dir);
-    while (current !== path.dirname(current)) {
-      if (fs.existsSync(path.join(current, '.git'))) return current;
-      current = path.dirname(current);
-    }
-    if (fs.existsSync(path.join(current, '.git'))) return current;
-    return dir;
-  }
-
   getGitRoot(sourcePath: string): string {
-    return this.findGitRoot(sourcePath);
+    return findGitRoot(sourcePath);
   }
 
   async detectCodeChanges(sourcePath: string): Promise<string[]> {
-    console.log('正在检测代码变更...');
+    appLog('正在检测代码变更...');
 
     try {
-      const projectRoot = this.findGitRoot(sourcePath);
-      const childProcess = require('child_process');
-      const status = childProcess.spawnSync('git', ['status', '--porcelain'], { cwd: projectRoot });
-      if (status.error) throw status.error;
-
-      const modifiedFiles: string[] = [];
-      const gitStatus = status.stdout.toString().trim();
-
-      if (gitStatus) {
-        for (const line of gitStatus.split('\n').filter((l: string) => l.trim())) {
-          const parts = line.trim().split(/\s+/);
-          const relativePath = parts.slice(1).join(' ');
-          const absolutePath = path.normalize(
-            relativePath.startsWith('/') ? relativePath : path.join(projectRoot, relativePath),
-          );
-          if (absolutePath.match(/\.(java|js|py)$/) && !isTestOrNonApiSourceFile(absolutePath)) {
-            modifiedFiles.push(absolutePath);
-          }
-        }
-      }
-
-      console.log(`检测到 ${modifiedFiles.length} 个文件有变更`);
+      const modifiedFiles = getGitChangedFiles(sourcePath, (absolutePath) =>
+        Boolean(absolutePath.match(/\.(java|js|py)$/) && !isTestOrNonApiSourceFile(absolutePath)),
+      );
+      appLog(`检测到 ${modifiedFiles.length} 个文件有变更`);
       this.changedFiles = modifiedFiles;
       return modifiedFiles;
     } catch {
-      console.warn('Git 变更检测失败，将扫描所有文件');
+      appWarn('Git 变更检测失败，将扫描所有文件');
       this.changedFiles = [];
       return [];
     }
@@ -77,8 +51,8 @@ export class ApiScanner {
     console.log(`正在扫描 ${config.name} 项目接口变化: ${sourcePath}`);
 
     if (framework === 'springboot') {
-      const dtoScope = springBootParser.collectDtoScanScope(sourcePath, this.changedFiles, (d) => this.findGitRoot(d));
-      this.dtoSchemas = springBootParser.scanJavaClasses(sourcePath, dtoScope, this.changedFiles, (d) => this.findGitRoot(d));
+      const dtoScope = springBootParser.collectDtoScanScope(sourcePath, this.changedFiles, findGitRoot);
+      this.dtoSchemas = springBootParser.scanJavaClasses(sourcePath, dtoScope, this.changedFiles, findGitRoot);
     }
 
     let files: string[];

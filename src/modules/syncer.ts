@@ -5,7 +5,9 @@ import { apifoxClient } from '../clients/apifoxClient';
 import { ErrorHandler } from '../utils/errorHandler';
 import { retryRequest } from '../utils/helper';
 import { resolveApifoxCredentials } from '../utils/apifox/credentials';
+import { ensureTempDir } from '../utils/apifox/syncPlan';
 import { extractApisFromOpenApiDoc } from '../utils/openapi/openapiWalk';
+import { appLog } from '../utils/logger';
 import { ApiInfo } from '../types';
 
 class ApifoxSyncer {
@@ -98,13 +100,10 @@ class ApifoxSyncer {
   }
 
   saveDocToFile(doc: any, filename: string): void {
-    const dir = path.join(__dirname, '../temp');
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
+    const dir = ensureTempDir();
     const filePath = path.join(dir, filename);
     fs.writeFileSync(filePath, JSON.stringify(doc, null, 2));
-    console.log(`文档已保存到: ${filePath}`);
+    appLog(`文档已保存到: ${filePath}`);
   }
 
   async getOpenApiDoc(url: string): Promise<any> {

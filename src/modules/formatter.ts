@@ -5,7 +5,8 @@ import {
   getDefaultPropDescription,
   getDefaultResponseDescription,
 } from '../utils/helper';
-import { ApiInfo } from '../types';
+import { ApiInfo, OpenApiDocument } from '../types';
+import { appLog } from '../utils/logger';
 
 export interface FormatOpenApiResult {
   doc: any;
@@ -63,8 +64,8 @@ class ApiFormatter {
   }
 
   /** 格式化 OpenAPI 文档并统计需格式化的接口数（单次遍历） */
-  formatOpenApiDoc(doc: any): FormatOpenApiResult {
-    console.log('格式化 API 文档，确保字段说明使用中文...');
+  formatOpenApiDoc(doc: OpenApiDocument): FormatOpenApiResult {
+    appLog('格式化 API 文档，确保字段说明使用中文...');
     this.unformattedCount = 0;
 
     if (doc.paths) {
@@ -109,31 +110,78 @@ class ApiFormatter {
       });
     }
 
-    if (doc.components) {
-      if (doc.components.schemas) {
-        Object.keys(doc.components.schemas).forEach((schemaName) => {
-          doc.components.schemas[schemaName] = this.formatSchema(doc.components.schemas[schemaName]);
-        });
+    if (doc.components?.schemas) {
+      for (const schemaName of Object.keys(doc.components.schemas)) {
+        this.formatSchema(doc.components.schemas[schemaName]);
       }
+    }
 
-      if (doc.components.parameters) {
-        Object.keys(doc.components.parameters).forEach((paramName) => {
-          if (
-            !doc.components.parameters[paramName].description ||
-            !containsChinese(doc.components.parameters[paramName].description)
-          ) {
-            doc.components.parameters[paramName].description = getDefaultParamDescription(paramName);
-          }
-        });
-      }
+    if (doc.components?.parameters) {
+      Object.keys(doc.components.parameters).forEach((paramName) => {
+        const param = doc.components!.parameters![paramName];
+        if (!param.description || !containsChinese(param.description)) {
+          doc.components!.parameters![paramName] = {
+            ...param,
+            description: getDefaultParamDescription(paramName),
+          };
+        }
+      });
     }
 
     return { doc, unformattedCount: this.unformattedCount };
   }
 
-  /** @deprecated 使用 formatOpenApiDoc 返回的 unformattedCount */
-  countUnformattedChinese(doc: any): number {
-    return this.formatOpenApiDoc(JSON.parse(JSON.stringify(doc))).unformattedCount;
+  /** 只读统计：有多少接口的字段说明尚未中文化（不修改文档） */
+  countUnformattedInDoc(doc: OpenApiDocument): number {
+    let count = 0;
+    if (!doc.paths) return 0;
+
+    for (const path of Object.keys(doc.paths)) {
+      for (const method of Object.keys(doc.paths[path])) {
+        const operation = doc.paths[path][method];
+        let needFormat = false;
+
+        if (!operation.summary || !containsChinese(operation.summary)) needFormat = true;
+        if (!operation.description || !containsChinese(operation.description)) needFormat = true;
+
+        if (operation.parameters) {
+          for (const param of operation.parameters) {
+            if (!param.description || !containsChinese(param.description)) needFormat = true;
+          }
+        }
+        if (operation.requestBody && this.schemaNeedsChinese(operation.requestBody)) needFormat = true;
+        if (operation.responses) {
+          for (const statusCode of Object.keys(operation.responses)) {
+            const response = operation.responses[statusCode];
+            if (!response.description || !containsChinese(response.description)) needFormat = true;
+            const schema = response.content?.['application/json']?.schema;
+            if (schema && this.checkSchemaNeedsChinese(schema)) needFormat = true;
+          }
+        }
+        if (needFormat) count++;
+      }
+    }
+    return count;
+  }
+
+  private schemaNeedsChinese(requestBody: { description?: string; content?: Record<string, { schema?: unknown }> }): boolean {
+    if (requestBody.description && !containsChinese(requestBody.description)) return true;
+    const schema = requestBody.content?.['application/json']?.schema;
+    return Boolean(schema && this.checkSchemaNeedsChinese(schema));
+  }
+
+  private checkSchemaNeedsChinese(schema: unknown): boolean {
+    const s = schema as { description?: string; properties?: Record<string, unknown>; type?: string; items?: unknown };
+    if (s.description && !containsChinese(s.description)) return true;
+    if (s.properties) {
+      for (const propName of Object.keys(s.properties)) {
+        const prop = s.properties[propName] as { description?: string; type?: string; properties?: Record<string, unknown>; items?: unknown };
+        if (!prop.description || !containsChinese(prop.description)) return true;
+        if (prop.type === 'object' && prop.properties && this.checkSchemaNeedsChinese(prop)) return true;
+        if (prop.type === 'array' && prop.items && this.checkSchemaNeedsChinese(prop.items)) return true;
+      }
+    }
+    return false;
   }
 
   formatRequestBody(requestBody: any): boolean {
@@ -313,14 +361,16 @@ class ApiFormatter {
     return { type: 'object', description: `请求体 (${bodyType})` };
   }
 
-  generateApiDocFromCode(detectedApis: ApiInfo[]): any {
-    console.log('正在根据代码生成接口文档...');
-    console.log('检测到的接口数量:', detectedApis.length);
-    detectedApis.forEach((api, index) => {
-      console.log(`接口 ${index + 1}:`, api.method.toUpperCase(), api.path, '返回类型:', api.returnType);
-    });
+  generateApiDocFromCode(detectedApis: ApiInfo[], options?: { quiet?: boolean }): OpenApiDocument {
+    if (!options?.quiet) {
+      appLog('正在根据代码生成接口文档...');
+      appLog('检测到的接口数量:', detectedApis.length);
+      detectedApis.forEach((api, index) => {
+        appLog(`接口 ${index + 1}:`, api.method.toUpperCase(), api.path, '返回类型:', api.returnType);
+      });
+    }
 
-    const openApiDoc: any = {
+    const openApiDoc: OpenApiDocument = {
       openapi: '3.0.0',
       info: {
         title: '自动生成的 API 文档',

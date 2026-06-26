@@ -1,68 +1,94 @@
 import { configManager } from '../config';
 import { ConfigValidator } from './configValidator';
 import apifoxMCP from '../mcp/apifox';
+import { commanderOptsToCliArgs } from '../cli/options';
+import { CliArgs } from '../types';
+import { appLog, appWarn } from './logger';
 
-export type CliArgs = Record<string, any>;
-
-/** 解析命令行参数并合并配置文件、MCP 凭据 */
-export function parseCliArgs(argv: string[] = process.argv.slice(2)): CliArgs {
+/** 解析命令行中的 --key value 参数（补充 commander 未声明的选项） */
+export function parseArgvFlags(argv: string[]): CliArgs {
   const parsed: CliArgs = {};
   let i = 0;
 
   while (i < argv.length) {
     const arg = argv[i];
-
     if (arg === '--help' || arg === '-h') {
-      parsed['help'] = true;
+      parsed.help = true;
       i++;
       continue;
     }
-
     if (arg.startsWith('--')) {
       const key = arg.slice(2);
       i++;
       if (i < argv.length && !argv[i].startsWith('--')) {
-        let value: any = argv[i];
-        if (key === 'api-path' && value && (value.startsWith('C:') || value.includes('\\'))) {
-          value = value.replace(/C:\/Program Files\/Git/, '');
-          value = value.replace(/\\/g, '/');
+        let value: string | boolean = argv[i];
+        if (key === 'api-path' && typeof value === 'string' && (value.startsWith('C:') || value.includes('\\'))) {
+          value = value.replace(/C:\/Program Files\/Git/, '').replace(/\\/g, '/');
         }
-        parsed[key] = value;
+        (parsed as Record<string, unknown>)[key] = value;
         i++;
       } else {
-        parsed[key] = true;
+        (parsed as Record<string, unknown>)[key] = true;
       }
     } else {
       i++;
     }
   }
-
-  const config = configManager.readConfig();
-  if (config) {
-    Object.keys(config).forEach((key) => {
-      if (parsed[key] === undefined) {
-        parsed[key] = (config as any)[key];
-      }
-    });
-  }
-
-  if (parsed['project-name'] && !parsed['apifox-project-id'] && !parsed['apifox-api-key']) {
-    const connectionInfo = apifoxMCP.getConnectionInfo(parsed['project-name']);
-    if (connectionInfo) {
-      parsed['apifox-project-id'] = connectionInfo.projectId;
-      parsed['apifox-api-key'] = connectionInfo.apiKey;
-      console.log(`使用 MCP 项目 "${parsed['project-name']}" 的连接信息 (ID: ${connectionInfo.projectId})`);
-    } else {
-      console.warn(`项目 "${parsed['project-name']}" 未连接，将只扫描接口变化`);
-      parsed['apifox-project-id'] = null;
-      parsed['apifox-api-key'] = null;
-    }
-  }
-
   return parsed;
 }
 
-/** 校验 scan/sync 所需参数，失败时打印用法并退出 */
+export function mergeConfigIntoArgs(args: CliArgs): CliArgs {
+  const config = configManager.readConfig();
+  if (!config) return args;
+
+  const merged = { ...args };
+  Object.keys(config).forEach((key) => {
+    if ((merged as Record<string, unknown>)[key] === undefined) {
+      (merged as Record<string, unknown>)[key] = (config as unknown as Record<string, unknown>)[key];
+    }
+  });
+  return merged;
+}
+
+export function resolveMcpCredentials(args: CliArgs): CliArgs {
+  if (!args['project-name'] || args['apifox-project-id'] || args['apifox-api-key']) {
+    return args;
+  }
+
+  const connectionInfo = apifoxMCP.getConnectionInfo(args['project-name']);
+  if (connectionInfo) {
+    appLog(`使用 MCP 项目 "${args['project-name']}" 的连接信息 (ID: ${connectionInfo.projectId})`);
+    return {
+      ...args,
+      'apifox-project-id': connectionInfo.projectId,
+      'apifox-api-key': connectionInfo.apiKey,
+    };
+  }
+
+  appWarn(`项目 "${args['project-name']}" 未连接，将只扫描接口变化`);
+  return { ...args, 'apifox-project-id': undefined, 'apifox-api-key': undefined };
+}
+
+/** 合并 commander 选项、argv 补充参数、配置文件与 MCP 凭据 */
+export function resolveCliArgs(commanderOpts: Record<string, unknown>, argv: string[]): CliArgs {
+  const fromCommander = commanderOptsToCliArgs(commanderOpts);
+  const fromArgv = parseArgvFlags(stripCommand(argv));
+  const merged: CliArgs = { ...fromArgv, ...fromCommander };
+
+  Object.keys(fromArgv).forEach((key) => {
+    if ((fromCommander as Record<string, unknown>)[key] === undefined) {
+      (merged as Record<string, unknown>)[key] = (fromArgv as Record<string, unknown>)[key];
+    }
+  });
+
+  return resolveMcpCredentials(mergeConfigIntoArgs(merged));
+}
+
+/** @deprecated 使用 resolveCliArgs；保留供 MCP 等非 commander 入口 */
+export function parseCliArgs(argv: string[] = process.argv.slice(2)): CliArgs {
+  return resolveMcpCredentials(mergeConfigIntoArgs(parseArgvFlags(stripCommand(argv))));
+}
+
 export function validateCliArgs(args: CliArgs, command: 'scan' | 'sync'): void {
   const validationErrors = ConfigValidator.validate(args);
   if (validationErrors.length === 0) return;
@@ -75,7 +101,6 @@ export function validateCliArgs(args: CliArgs, command: 'scan' | 'sync'): void {
   if (command === 'sync') {
     console.log('\nUsage:');
     console.log('  api-sync-to-apifox sync --source-type code --source-path <dir> --framework springboot');
-    console.log('  api-sync-to-apifox sync --source-type swagger --source-path <url>');
   } else {
     console.log('\nUsage:');
     console.log('  api-sync-to-apifox scan --source-type code --source-path <dir> --framework springboot --scan-type changed');
@@ -84,7 +109,6 @@ export function validateCliArgs(args: CliArgs, command: 'scan' | 'sync'): void {
   process.exit(1);
 }
 
-/** 过滤掉子命令名，仅保留选项参数 */
 export function stripCommand(argv: string[]): string[] {
   const commands = new Set(['scan', 'sync', 'workflow', 'branches', 'config', 'mcp', 'help']);
   if (argv.length > 0 && commands.has(argv[0])) {

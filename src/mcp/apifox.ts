@@ -17,17 +17,21 @@ class ApifoxMCP {
     this.loadCredentials();
   }
 
-  loadCredentials(): void {
+  loadCredentials(verbose = false): void {
     try {
       if (fs.existsSync(this.credentialsPath)) {
         const credentials = JSON.parse(fs.readFileSync(this.credentialsPath, 'utf8'));
         Object.keys(credentials).forEach((projectName) => {
           this.connections.set(projectName, credentials[projectName]);
         });
-        console.log(`已加载 ${this.connections.size} 个项目的连接信息`);
+        if (verbose && this.connections.size > 0) {
+          console.log(`已加载 ${this.connections.size} 个项目的连接信息`);
+        }
       }
     } catch (error) {
-      console.warn('加载凭据文件失败:', (error as Error).message);
+      if (verbose) {
+        console.warn('加载凭据文件失败:', (error as Error).message);
+      }
     }
   }
 

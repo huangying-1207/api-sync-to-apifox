@@ -3,7 +3,8 @@ import ApiComparer from '../modules/comparer';
 import ApiFormatter from '../modules/formatter';
 import ApifoxSyncer from '../modules/syncer';
 import { matchApiByMethodPath, parseApisParam } from '../utils/openapi/apiMatch';
-import { ApiInfo } from '../types';
+import { ApiInfo, OpenApiDocument } from '../types';
+import { appLog } from '../utils/logger';
 
 /** scan → format 流水线编排 */
 export class SyncPipeline {
@@ -27,9 +28,15 @@ export class SyncPipeline {
   }
 
   /** 从代码生成并格式化 OpenAPI 文档 */
-  generateFormattedDocFromApis(apis: ApiInfo[]): { doc: any; unformattedCount: number } {
+  generateFormattedDocFromApis(apis: ApiInfo[]): { doc: OpenApiDocument; unformattedCount: number } {
     const rawDoc = this.formatter.generateApiDocFromCode(apis);
     return this.formatter.formatOpenApiDoc(rawDoc);
+  }
+
+  /** scan 阶段轻量统计：只生成 raw doc 并计数，不做格式化 */
+  countUnformattedFromApis(apis: ApiInfo[]): number {
+    const rawDoc = this.formatter.generateApiDocFromCode(apis, { quiet: true });
+    return this.formatter.countUnformattedInDoc(rawDoc);
   }
 
   /** 生成单个指定接口的格式化文档 */

@@ -2,10 +2,11 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { Command } from 'commander';
 import { ErrorHandler } from '../utils/errorHandler';
-import { parseCliArgs, stripCommand, validateCliArgs } from '../utils/cliArgs';
+import { resolveCliArgs, stripCommand, validateCliArgs } from '../utils/cliArgs';
 import { ApifoxSyncApp } from './app';
 import { handleConfigInit } from './configInit';
 import { printHelp } from './help';
+import { addBranchOptions, addWorkflowOptions } from './options';
 
 function spawnMcpServer(): void {
   const mcpServerPath = path.join(__dirname, '../mcp/mcp-server.js');
@@ -21,48 +22,52 @@ export async function runCli(): Promise<void> {
   const program = new Command();
   program.name('api-sync-to-apifox').description('Apifox 接口同步工具').version('1.3.0');
 
-  program
-    .command('scan')
-    .description('扫描后端接口变更（不执行同步）')
-    .allowUnknownOption()
-    .action(async () => {
-      const args = parseCliArgs(stripCommand(argv));
-      validateCliArgs(args, 'scan');
-      await app.scan(args);
-    });
+  addWorkflowOptions(
+    program
+      .command('scan')
+      .description('扫描后端接口变更（不执行同步）')
+      .allowUnknownOption(),
+  ).action(async (_opts, cmd) => {
+    const args = resolveCliArgs(cmd.opts(), argv);
+    validateCliArgs(args, 'scan');
+    await app.scan(args);
+  });
 
-  program
-    .command('sync')
-    .description('同步后端接口到 Apifox')
-    .allowUnknownOption()
-    .action(async () => {
-      const args = parseCliArgs(stripCommand(argv));
-      validateCliArgs(args, 'sync');
-      await app.sync(args);
-    });
+  addWorkflowOptions(
+    program
+      .command('sync')
+      .description('同步后端接口到 Apifox')
+      .allowUnknownOption(),
+  ).action(async (_opts, cmd) => {
+    const args = resolveCliArgs(cmd.opts(), argv);
+    validateCliArgs(args, 'sync');
+    await app.sync(args);
+  });
 
-  program
-    .command('workflow')
-    .description('一键工作流：scan + 分支列表')
-    .allowUnknownOption()
-    .action(async () => {
-      const args = parseCliArgs(stripCommand(argv));
-      validateCliArgs(args, 'scan');
-      await app.workflow(args);
-    });
+  addWorkflowOptions(
+    program
+      .command('workflow')
+      .description('一键工作流：scan + 分支列表')
+      .allowUnknownOption(),
+  ).action(async (_opts, cmd) => {
+    const args = resolveCliArgs(cmd.opts(), argv);
+    validateCliArgs(args, 'scan');
+    await app.workflow(args);
+  });
 
-  program
-    .command('branches')
-    .description('列出 Apifox 项目分支')
-    .allowUnknownOption()
-    .action(async () => {
-      try {
-        await app.listBranches(parseCliArgs(stripCommand(argv)));
-      } catch (error) {
-        console.error((error as Error).message);
-        process.exit(1);
-      }
-    });
+  addBranchOptions(
+    program
+      .command('branches')
+      .description('列出 Apifox 项目分支')
+      .allowUnknownOption(),
+  ).action(async (_opts, cmd) => {
+    try {
+      await app.listBranches(resolveCliArgs(cmd.opts(), argv));
+    } catch (error) {
+      console.error((error as Error).message);
+      process.exit(1);
+    }
+  });
 
   program
     .command('config [action]')
@@ -91,6 +96,7 @@ export async function runCli(): Promise<void> {
   if (argv.length === 0) {
     console.log('=== Apifox 同步技能 ===\n');
     console.log('可用命令: config init | scan | sync | workflow | branches | mcp | help');
+    console.log('各子命令支持 --help 查看参数，常用: --source-path --framework --project-name --quiet --json');
     return;
   }
 
