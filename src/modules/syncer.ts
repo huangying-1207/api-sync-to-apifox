@@ -29,12 +29,21 @@ class ApifoxSyncer {
     }
   }
 
-  async getApifoxExistingApis(projectId: string, apiKey: string, projectName?: string): Promise<ApiInfo[]> {
+  async getApifoxExistingApis(
+    projectId: string,
+    apiKey: string,
+    projectName?: string,
+    withFolders = false,
+  ): Promise<ApiInfo[]> {
     const credentials = resolveApifoxCredentials(projectId, apiKey, projectName);
     if (!credentials) return [];
 
     try {
-      const openApiDoc = await apifoxClient.exportOpenApi(credentials.projectId, credentials.apiKey);
+      const openApiDoc = await apifoxClient.exportOpenApi(
+        credentials.projectId,
+        credentials.apiKey,
+        { addFoldersToTags: withFolders },
+      );
       if (!openApiDoc || typeof openApiDoc === 'string') {
         console.warn('警告：未获取到 Apifox 现有接口信息，将同步所有检测到的接口');
         return [];
@@ -69,7 +78,7 @@ class ApifoxSyncer {
     const importOptions: Record<string, unknown> = {
       endpointOverwriteBehavior: 'OVERWRITE_EXISTING',
       schemaOverwriteBehavior: 'OVERWRITE_EXISTING',
-      updateFolderOfChangedEndpoint: false,
+      updateFolderOfChangedEndpoint: true,
       prependBasePath: false,
       deleteUnmatchedResources: false,
     };

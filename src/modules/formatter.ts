@@ -7,6 +7,7 @@ import {
 } from '../utils/helper';
 import { ApiInfo, OpenApiDocument } from '../types';
 import { appLog } from '../utils/logger';
+import { getDefaultControllerFolderName } from '../utils/java/controllerFolder';
 import { extractBaseTypeName, findGenericPayloadFieldName, isWrapperReturnType } from '../utils/java/responseType';
 
 export interface FormatOpenApiResult {
@@ -508,7 +509,7 @@ class ApiFormatter {
       const operation: any = {
         summary: `Auto-generated summary for ${api.method.toUpperCase()} ${api.path}`,
         description: `Auto-generated description for ${api.method.toUpperCase()} ${api.path}`,
-        tags: [api.controller],
+        tags: [api.folderName || getDefaultControllerFolderName(api)],
         responses: {
           '200': {
             description: 'Auto-generated success response',

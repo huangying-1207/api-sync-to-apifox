@@ -7,6 +7,14 @@ export interface ApiInfo {
   method: string;
   controller?: string;
   file?: string;
+  /** Controller 简单类名，如 DramaProjectController */
+  controllerClassName?: string;
+  /** Controller 上 @Api(tags) / @Tag(name) 的值 */
+  controllerTag?: string;
+  /** 同步到 Apifox 的目标文件夹名（写入 OpenAPI tags） */
+  folderName?: string;
+  /** 是否为 Apifox 中尚不存在的新接口 */
+  isNewEndpoint?: boolean;
   javaMethodName?: string;
   parameters?: ApiParameter[];
   requestBodyType?: string;

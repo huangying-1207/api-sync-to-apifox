@@ -86,7 +86,14 @@ function extractApiFromOperation(
   };
 
   if (!detailed) {
+    if (Array.isArray(methodDetails.tags) && methodDetails.tags.length > 0) {
+      api.folderName = String(methodDetails.tags[0]);
+    }
     return api;
+  }
+
+  if (Array.isArray(methodDetails.tags) && methodDetails.tags.length > 0) {
+    api.folderName = String(methodDetails.tags[0]);
   }
 
   if (methodDetails.parameters && Array.isArray(methodDetails.parameters)) {

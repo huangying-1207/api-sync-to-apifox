@@ -31,7 +31,11 @@ export class ApifoxClient {
     return response.data;
   }
 
-  async exportOpenApi(projectId: string, apiKey: string): Promise<any> {
+  async exportOpenApi(
+    projectId: string,
+    apiKey: string,
+    options?: { addFoldersToTags?: boolean },
+  ): Promise<any> {
     const response = await retryRequest(() =>
       axios.post(
         `${this.baseUrl}/v1/projects/${projectId}/export-openapi`,
@@ -39,7 +43,7 @@ export class ApifoxClient {
           scope: { type: 'ALL' },
           options: {
             includeApifoxExtensionProperties: false,
-            addFoldersToTags: false,
+            addFoldersToTags: options?.addFoldersToTags === true,
           },
           oasVersion: '3.1',
           exportFormat: 'JSON',

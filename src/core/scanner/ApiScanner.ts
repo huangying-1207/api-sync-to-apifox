@@ -11,6 +11,7 @@ import { findGitRoot, getGitChangedFiles } from '../../utils/git';
 import { appLog, appWarn } from '../../utils/logger';
 import { FRAMEWORK_CONFIGS, isTestOrNonApiSourceFile } from './frameworks';
 import { springBootParser } from './springbootParser';
+import { extractControllerFolderMeta } from '../../utils/java/controllerFolder';
 
 export { isTestOrNonApiSourceFile } from './frameworks';
 
@@ -80,6 +81,7 @@ export class ApiScanner {
       const rawContent = fs.readFileSync(file, 'utf8');
       const fileName = path.basename(file);
       const content = rawContent.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+      const controllerFolderMeta = extractControllerFolderMeta(rawContent, fileName);
 
       let classPathPrefix = '';
       if (config.classPathPattern) {
@@ -101,6 +103,8 @@ export class ApiScanner {
             path: (classPathPrefix + apiPath).replace(/\/+/g, '/'),
             method,
             controller: fileName,
+            controllerClassName: controllerFolderMeta.controllerClassName,
+            controllerTag: controllerFolderMeta.controllerTag,
             file,
             parameters: [],
           };

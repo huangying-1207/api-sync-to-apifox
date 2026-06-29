@@ -258,6 +258,7 @@ export class ApifoxSyncApp {
 
     const projectId = args['apifox-project-id'];
     const apiKey = args['apifox-api-key'];
+    const folderCredentials = { projectId, apiKey, projectName: args['project-name'] };
     const sourceType = args['source-type'];
     const sourcePath = args['source-path']!;
     const framework = args.framework!;
@@ -274,7 +275,7 @@ export class ApifoxSyncApp {
       if (apisParam) {
         appLog(`启用多接口同步模式: ${apisParam}`);
         this.pipeline.scanner.clearChangedFiles();
-        const doc = await this.pipeline.generateMultipleApisDoc(sourcePath, framework, apisParam);
+        const doc = await this.pipeline.generateMultipleApisDoc(sourcePath, framework, apisParam, folderCredentials);
         if (!doc) {
           appLog('未找到任何指定的接口');
           return;
@@ -283,7 +284,13 @@ export class ApifoxSyncApp {
       } else if (apiPath && apiMethod) {
         appLog(`启用单独接口同步模式: ${apiMethod.toUpperCase()} ${apiPath}`);
         this.pipeline.scanner.clearChangedFiles();
-        const doc = await this.pipeline.generateSingleApiDoc(sourcePath, framework, apiMethod, apiPath);
+        const doc = await this.pipeline.generateSingleApiDoc(
+          sourcePath,
+          framework,
+          apiMethod,
+          apiPath,
+          folderCredentials,
+        );
         if (!doc) {
           appLog('未找到指定的接口');
           return;
@@ -300,7 +307,12 @@ export class ApifoxSyncApp {
         plan.syncApis.forEach((api) => appLog(`  ${api.method.toUpperCase()} ${api.path}`));
 
         this.pipeline.scanner.scopeToPlanChangedFiles(plan.changedFiles);
-        const doc = await this.pipeline.generateMultipleApisDoc(sourcePath, framework, syncApisToParam(plan.syncApis));
+        const doc = await this.pipeline.generateMultipleApisDoc(
+          sourcePath,
+          framework,
+          syncApisToParam(plan.syncApis),
+          folderCredentials,
+        );
         if (!doc) {
           appLog('同步计划中的接口在代码中未找到');
           return;
@@ -320,7 +332,7 @@ export class ApifoxSyncApp {
         appLog('启用全量更新模式');
         this.pipeline.scanner.clearChangedFiles();
         const detectedApis = await this.pipeline.scanCodeApis(sourcePath, framework);
-        formattedDoc = this.pipeline.generateFormattedDocFromApis(detectedApis).doc;
+        formattedDoc = (await this.pipeline.generateFormattedDocFromApis(detectedApis, folderCredentials)).doc;
       }
     } else {
       const originalDoc = await this.pipeline.syncer.getOpenApiDoc(sourcePath);
