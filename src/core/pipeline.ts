@@ -7,10 +7,9 @@ import { resolveEndpointFolders } from '../utils/java/controllerFolder';
 import { ApiInfo, OpenApiDocument } from '../types';
 import { appLog } from '../utils/logger';
 
-export interface FolderResolveCredentials {
-  projectId?: string;
-  apiKey?: string;
-  projectName?: string;
+export interface FolderResolveContext {
+  existingApis?: ApiInfo[];
+  allScannedApis?: ApiInfo[];
 }
 
 /** scan → format 流水线编排 */
@@ -35,24 +34,10 @@ export class SyncPipeline {
   }
 
   /** 结合 Apifox 已有目录与同 Controller 接口，解析待同步接口的 folderName */
-  async resolveFoldersForApis(
-    apis: ApiInfo[],
-    credentials?: FolderResolveCredentials,
-    allScannedApis?: ApiInfo[],
-  ): Promise<void> {
+  resolveFoldersForApis(apis: ApiInfo[], context: FolderResolveContext = {}): void {
     if (apis.length === 0) return;
 
-    let existingApis: ApiInfo[] = [];
-    if (credentials?.projectId && credentials?.apiKey) {
-      existingApis = await this.syncer.getApifoxExistingApis(
-        credentials.projectId,
-        credentials.apiKey,
-        credentials.projectName,
-        true,
-      );
-    }
-
-    resolveEndpointFolders(apis, existingApis, allScannedApis ?? apis);
+    resolveEndpointFolders(apis, context.existingApis ?? [], context.allScannedApis ?? apis);
     apis.forEach((api) => {
       if (api.folderName) {
         appLog(
@@ -65,12 +50,7 @@ export class SyncPipeline {
   }
 
   /** 从代码生成并格式化 OpenAPI 文档 */
-  async generateFormattedDocFromApis(
-    apis: ApiInfo[],
-    credentials?: FolderResolveCredentials,
-    allScannedApis?: ApiInfo[],
-  ): Promise<{ doc: OpenApiDocument; unformattedCount: number }> {
-    await this.resolveFoldersForApis(apis, credentials, allScannedApis);
+  generateFormattedDocFromApis(apis: ApiInfo[]): { doc: OpenApiDocument; unformattedCount: number } {
     const rawDoc = this.formatter.generateApiDocFromCode(apis);
     return this.formatter.formatOpenApiDoc(rawDoc);
   }
@@ -87,12 +67,13 @@ export class SyncPipeline {
     framework: string,
     method: string,
     apiPath: string,
-    credentials?: FolderResolveCredentials,
+    existingApis: ApiInfo[] = [],
   ): Promise<any | null> {
     const detectedApis = await this.scanCodeApis(sourcePath, framework);
     const targetApi = matchApiByMethodPath(detectedApis, method, apiPath);
     if (!targetApi) return null;
-    return (await this.generateFormattedDocFromApis([targetApi], credentials, detectedApis)).doc;
+    this.resolveFoldersForApis([targetApi], { existingApis, allScannedApis: detectedApis });
+    return this.generateFormattedDocFromApis([targetApi]).doc;
   }
 
   /** 生成多个指定接口的格式化文档 */
@@ -100,7 +81,7 @@ export class SyncPipeline {
     sourcePath: string,
     framework: string,
     apisParam: string,
-    credentials?: FolderResolveCredentials,
+    existingApis: ApiInfo[] = [],
   ): Promise<any | null> {
     const detectedApis = await this.scanCodeApis(sourcePath, framework);
     const apiList = parseApisParam(apisParam);
@@ -130,6 +111,7 @@ export class SyncPipeline {
     console.log(`找到 ${targetApis.length} 个指定接口:`);
     targetApis.forEach((api) => console.log(`  ${api.method.toUpperCase()} ${api.path}`));
 
-    return (await this.generateFormattedDocFromApis(targetApis, credentials, detectedApis)).doc;
+    this.resolveFoldersForApis(targetApis, { existingApis, allScannedApis: detectedApis });
+    return this.generateFormattedDocFromApis(targetApis).doc;
   }
 }

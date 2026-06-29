@@ -243,6 +243,21 @@ export class ApifoxSyncApp {
     appLog('下一步：LLM 分析 temp/apifox-sync-plan.json，用户确认分支与接口后执行 sync。');
   }
 
+  private async loadExistingApisForFolderResolution(
+    projectId: string | undefined,
+    apiKey: string | undefined,
+    projectName: string | undefined,
+    targetBranch?: ApifoxBranch,
+  ): Promise<ApiInfo[]> {
+    if (!projectId || !apiKey) return [];
+
+    if (targetBranch && !targetBranch.isMain) {
+      appWarn('Apifox export-openapi 暂未提供目标分支参数，本次目录继承使用项目默认导出结果');
+    }
+
+    return this.pipeline.syncer.getApifoxExistingApis(projectId, apiKey, projectName, true);
+  }
+
   async sync(args: CliArgs): Promise<void> {
     this.applyLogOptions(args);
     appLog('=== 开始 Apifox 接口同步 ===');
@@ -258,7 +273,6 @@ export class ApifoxSyncApp {
 
     const projectId = args['apifox-project-id'];
     const apiKey = args['apifox-api-key'];
-    const folderCredentials = { projectId, apiKey, projectName: args['project-name'] };
     const sourceType = args['source-type'];
     const sourcePath = args['source-path']!;
     const framework = args.framework!;
@@ -270,12 +284,34 @@ export class ApifoxSyncApp {
 
     let formattedDoc: OpenApiDocument;
     let confirmedPlan: SyncPlan | undefined;
+    let targetBranch: ApifoxBranch | undefined;
 
     if (sourceType === 'code') {
+      if (!apisParam && !(apiPath && apiMethod) && syncMode === 'incremental') {
+        const planFile = syncPlanPath || getDefaultPlanPath();
+        appLog(`从同步计划加载接口: ${planFile}`);
+        const plan = loadSyncPlan(planFile);
+        validateSyncPlanForSync(plan);
+        confirmedPlan = plan;
+
+        appLog(`已确认同步 ${plan.syncApis.length} 个接口（确认时间: ${plan.confirmedAt || '未知'}）`);
+        plan.syncApis.forEach((api) => appLog(`  ${api.method.toUpperCase()} ${api.path}`));
+      }
+
+      if (projectId && apiKey) {
+        targetBranch = await this.resolveSyncTargetBranch(args, confirmedPlan, projectId, apiKey);
+      }
+      const existingApis = await this.loadExistingApisForFolderResolution(
+        projectId,
+        apiKey,
+        args['project-name'],
+        targetBranch,
+      );
+
       if (apisParam) {
         appLog(`启用多接口同步模式: ${apisParam}`);
         this.pipeline.scanner.clearChangedFiles();
-        const doc = await this.pipeline.generateMultipleApisDoc(sourcePath, framework, apisParam, folderCredentials);
+        const doc = await this.pipeline.generateMultipleApisDoc(sourcePath, framework, apisParam, existingApis);
         if (!doc) {
           appLog('未找到任何指定的接口');
           return;
@@ -289,54 +325,39 @@ export class ApifoxSyncApp {
           framework,
           apiMethod,
           apiPath,
-          folderCredentials,
+          existingApis,
         );
         if (!doc) {
           appLog('未找到指定的接口');
           return;
         }
         formattedDoc = doc;
-      } else if (syncMode === 'incremental') {
-        const planFile = syncPlanPath || getDefaultPlanPath();
-        appLog(`从同步计划加载接口: ${planFile}`);
-        const plan = loadSyncPlan(planFile);
-        validateSyncPlanForSync(plan);
-        confirmedPlan = plan;
-
-        appLog(`已确认同步 ${plan.syncApis.length} 个接口（确认时间: ${plan.confirmedAt || '未知'}）`);
-        plan.syncApis.forEach((api) => appLog(`  ${api.method.toUpperCase()} ${api.path}`));
-
-        this.pipeline.scanner.scopeToPlanChangedFiles(plan.changedFiles);
+      } else if (confirmedPlan) {
+        this.pipeline.scanner.scopeToPlanChangedFiles(confirmedPlan.changedFiles);
         const doc = await this.pipeline.generateMultipleApisDoc(
           sourcePath,
           framework,
-          syncApisToParam(plan.syncApis),
-          folderCredentials,
+          syncApisToParam(confirmedPlan.syncApis),
+          existingApis,
         );
         if (!doc) {
           appLog('同步计划中的接口在代码中未找到');
           return;
         }
         formattedDoc = doc;
-
-        this.pipeline.syncer.saveDocToFile(formattedDoc, 'formatted-api-doc.json');
-        await this.performSync(
-          formattedDoc,
-          projectId,
-          apiKey,
-          syncMode,
-          await this.resolveSyncTargetBranch(args, confirmedPlan, projectId, apiKey),
-        );
-        return;
       } else {
         appLog('启用全量更新模式');
         this.pipeline.scanner.clearChangedFiles();
         const detectedApis = await this.pipeline.scanCodeApis(sourcePath, framework);
-        formattedDoc = (await this.pipeline.generateFormattedDocFromApis(detectedApis, folderCredentials)).doc;
+        this.pipeline.resolveFoldersForApis(detectedApis, { existingApis, allScannedApis: detectedApis });
+        formattedDoc = this.pipeline.generateFormattedDocFromApis(detectedApis).doc;
       }
     } else {
       const originalDoc = await this.pipeline.syncer.getOpenApiDoc(sourcePath);
       formattedDoc = this.pipeline.formatter.formatOpenApiDoc(originalDoc).doc;
+      if (projectId && apiKey) {
+        targetBranch = await this.resolveSyncTargetBranch(args, confirmedPlan, projectId, apiKey);
+      }
     }
 
     this.pipeline.syncer.saveDocToFile(formattedDoc, 'formatted-api-doc.json');
@@ -345,7 +366,7 @@ export class ApifoxSyncApp {
       projectId,
       apiKey,
       syncMode,
-      await this.resolveSyncTargetBranch(args, confirmedPlan, projectId, apiKey),
+      targetBranch,
     );
   }
 

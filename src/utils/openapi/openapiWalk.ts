@@ -1,4 +1,5 @@
 import { ApiInfo, DtoSchemaMap } from '../../types';
+import { getFolderNameFromOpenApiTags } from '../apifox/folderTags';
 
 /** 从 Java 扫描结果（mapFields + DTO Schema）提取响应字段名 */
 export function extractResponseFieldNamesFromApi(api: ApiInfo, dtoSchemas: DtoSchemaMap = {}): string[] {
@@ -85,15 +86,13 @@ function extractApiFromOperation(
     parameters: [],
   };
 
-  if (!detailed) {
-    if (Array.isArray(methodDetails.tags) && methodDetails.tags.length > 0) {
-      api.folderName = String(methodDetails.tags[0]);
-    }
-    return api;
+  const folderName = getFolderNameFromOpenApiTags(methodDetails.tags);
+  if (folderName) {
+    api.folderName = folderName;
   }
 
-  if (Array.isArray(methodDetails.tags) && methodDetails.tags.length > 0) {
-    api.folderName = String(methodDetails.tags[0]);
+  if (!detailed) {
+    return api;
   }
 
   if (methodDetails.parameters && Array.isArray(methodDetails.parameters)) {

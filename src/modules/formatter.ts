@@ -7,7 +7,7 @@ import {
 } from '../utils/helper';
 import { ApiInfo, OpenApiDocument } from '../types';
 import { appLog } from '../utils/logger';
-import { getDefaultControllerFolderName } from '../utils/java/controllerFolder';
+import { buildOpenApiTagsForFolder } from '../utils/apifox/folderTags';
 import { extractBaseTypeName, findGenericPayloadFieldName, isWrapperReturnType } from '../utils/java/responseType';
 
 export interface FormatOpenApiResult {
@@ -509,7 +509,6 @@ class ApiFormatter {
       const operation: any = {
         summary: `Auto-generated summary for ${api.method.toUpperCase()} ${api.path}`,
         description: `Auto-generated description for ${api.method.toUpperCase()} ${api.path}`,
-        tags: [api.folderName || getDefaultControllerFolderName(api)],
         responses: {
           '200': {
             description: 'Auto-generated success response',
@@ -521,6 +520,10 @@ class ApiFormatter {
           },
         },
       };
+      const tags = buildOpenApiTagsForFolder(api.folderName);
+      if (tags) {
+        operation.tags = tags;
+      }
 
       if (api.parameters && api.parameters.length > 0) {
         operation.parameters = api.parameters.map((param) => ({

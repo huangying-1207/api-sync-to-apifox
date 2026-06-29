@@ -7,6 +7,8 @@ export interface ApiInfo {
   method: string;
   controller?: string;
   file?: string;
+  /** Controller 稳定标识，优先用于跨接口目录归类 */
+  controllerKey?: string;
   /** Controller 简单类名，如 DramaProjectController */
   controllerClassName?: string;
   /** Controller 上 @Api(tags) / @Tag(name) 的值 */

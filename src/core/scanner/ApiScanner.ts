@@ -81,7 +81,8 @@ export class ApiScanner {
       const rawContent = fs.readFileSync(file, 'utf8');
       const fileName = path.basename(file);
       const content = rawContent.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
-      const controllerFolderMeta = extractControllerFolderMeta(rawContent, fileName);
+      const controllerFolderMeta = extractControllerFolderMeta(content, fileName);
+      const controllerKey = path.resolve(file).replace(/\\/g, '/').toLowerCase();
 
       let classPathPrefix = '';
       if (config.classPathPattern) {
@@ -103,6 +104,7 @@ export class ApiScanner {
             path: (classPathPrefix + apiPath).replace(/\/+/g, '/'),
             method,
             controller: fileName,
+            controllerKey,
             controllerClassName: controllerFolderMeta.controllerClassName,
             controllerTag: controllerFolderMeta.controllerTag,
             file,

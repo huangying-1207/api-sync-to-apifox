@@ -7,33 +7,98 @@ export interface ControllerFolderMeta {
   controllerTag?: string;
 }
 
+function stripJavaComments(content: string): string {
+  let result = '';
+  let inBlockComment = false;
+  let inLineComment = false;
+  let inString: '"' | "'" | null = null;
+  let escaped = false;
+
+  for (let i = 0; i < content.length; i++) {
+    const char = content[i];
+    const next = content[i + 1];
+
+    if (inLineComment) {
+      if (char === '\n' || char === '\r') {
+        inLineComment = false;
+        result += char;
+      }
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (char === '*' && next === '/') {
+        inBlockComment = false;
+        i++;
+      }
+      continue;
+    }
+
+    if (inString) {
+      result += char;
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === inString) {
+        inString = null;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      inString = char;
+      result += char;
+      continue;
+    }
+
+    if (char === '/' && next === '/') {
+      inLineComment = true;
+      i++;
+      continue;
+    }
+
+    if (char === '/' && next === '*') {
+      inBlockComment = true;
+      i++;
+      continue;
+    }
+
+    result += char;
+  }
+
+  return result;
+}
+
+function extractAnnotationValue(content: string, annotationName: string, fieldName: string): string | undefined {
+  const annotation = content.match(new RegExp(`@${annotationName}\\s*\\(([\\s\\S]*?)\\)`));
+  const annotationBody = annotation?.[1];
+  if (!annotationBody) return undefined;
+
+  const value = annotationBody.match(new RegExp(`${fieldName}\\s*=\\s*(?:\\{\\s*)?["']([^"']+)["']`));
+  return value?.[1]?.trim();
+}
+
+function getControllerFolderKey(api: ApiInfo): string | undefined {
+  return (
+    api.controllerKey ||
+    api.file?.replace(/\\/g, '/').toLowerCase() ||
+    api.controller ||
+    api.controllerClassName
+  );
+}
+
 /** 从 Controller 源码解析类名与 @Api/@Tag 分组名 */
 export function extractControllerFolderMeta(content: string, fileName: string): ControllerFolderMeta {
   const controllerClassName = path.basename(fileName, path.extname(fileName));
+  const uncommentedContent = stripJavaComments(content);
 
-  const apiTagSingle = content.match(/@Api\s*\(\s*tags\s*=\s*"([^"]+)"/);
-  if (apiTagSingle?.[1]) {
-    return { controllerClassName, controllerTag: apiTagSingle[1].trim() };
-  }
-
-  const apiTagSingleQuote = content.match(/@Api\s*\(\s*tags\s*=\s*'([^']+)'/);
-  if (apiTagSingleQuote?.[1]) {
-    return { controllerClassName, controllerTag: apiTagSingleQuote[1].trim() };
-  }
-
-  const apiTagArray = content.match(/@Api\s*\(\s*tags\s*=\s*\{\s*"([^"]+)"/);
-  if (apiTagArray?.[1]) {
-    return { controllerClassName, controllerTag: apiTagArray[1].trim() };
-  }
-
-  const tagName = content.match(/@Tag\s*\(\s*name\s*=\s*"([^"]+)"/);
-  if (tagName?.[1]) {
-    return { controllerClassName, controllerTag: tagName[1].trim() };
-  }
-
-  const tagNameQuote = content.match(/@Tag\s*\(\s*name\s*=\s*'([^']+)'/);
-  if (tagNameQuote?.[1]) {
-    return { controllerClassName, controllerTag: tagNameQuote[1].trim() };
+  const controllerTag =
+    extractAnnotationValue(uncommentedContent, 'Api', 'tags') ||
+    extractAnnotationValue(uncommentedContent, 'Tag', 'name') ||
+    extractAnnotationValue(uncommentedContent, 'Api', 'value');
+  if (controllerTag) {
+    return { controllerClassName, controllerTag };
   }
 
   return { controllerClassName };
@@ -63,10 +128,11 @@ function buildControllerFolderMap(
 
   const controllerFolderMap = new Map<string, string>();
   for (const scanned of allScannedApis) {
-    if (!scanned.controller) continue;
+    const controllerKey = getControllerFolderKey(scanned);
+    if (!controllerKey) continue;
     const existing = existingByKey.get(buildApiMapKey(scanned.method, scanned.path));
-    if (existing?.folderName && !controllerFolderMap.has(scanned.controller)) {
-      controllerFolderMap.set(scanned.controller, existing.folderName);
+    if (existing?.folderName && !controllerFolderMap.has(controllerKey)) {
+      controllerFolderMap.set(controllerKey, existing.folderName);
     }
   }
   return controllerFolderMap;
@@ -98,14 +164,15 @@ export function resolveEndpointFolders(
     }
 
     api.isNewEndpoint = true;
-    if (api.controller && controllerFolderMap.has(api.controller)) {
-      api.folderName = controllerFolderMap.get(api.controller)!;
+    const controllerKey = getControllerFolderKey(api);
+    if (controllerKey && controllerFolderMap.has(controllerKey)) {
+      api.folderName = controllerFolderMap.get(controllerKey)!;
       continue;
     }
 
     api.folderName = getDefaultControllerFolderName(api);
-    if (api.controller) {
-      controllerFolderMap.set(api.controller, api.folderName);
+    if (controllerKey) {
+      controllerFolderMap.set(controllerKey, api.folderName);
     }
   }
 }
