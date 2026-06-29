@@ -126,6 +126,8 @@ export interface CliArgs extends Partial<Config> {
   help?: boolean;
   'refresh-branches'?: boolean;
   'no-branch-prompt'?: boolean;
+  /** 同步时将 OpenAPI 文档写入 temp/formatted-api-doc.json */
+  'save-doc'?: boolean;
 }
 
 export interface OpenApiDocument {

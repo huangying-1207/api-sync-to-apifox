@@ -24,7 +24,7 @@ description: >-
 node dist/index.js workflow --project-name <项目名>
 ```
 
-等价于 `scan` + `branches --json`，并生成 `temp/apifox-workflow-summary.json`。
+等价于 `scan` + `branches --json`（分支列表输出到 stdout）。
 
 或分步：
 
@@ -52,7 +52,7 @@ node dist/index.js branches --json
 }
 ```
 
-分析报告格式见 [impact-analysis-template.md](impact-analysis-template.md)。
+分析报告格式见下文「附录：分析报告格式」。
 
 ## Step 3: 用户确认
 
@@ -91,12 +91,62 @@ node dist/index.js branches --json
 node dist/index.js sync --sync-mode incremental
 ```
 
-未确认时 sync 拒绝执行。
+未确认时 sync 拒绝执行。调试时可加 `--save-doc` 将 OpenAPI 文档写入 `temp/formatted-api-doc.json`。
 
 ## 禁止
 
 - 不要在用户确认前执行 sync
 - 不要依赖静态依赖图分析影响（已移除）
+
+## 附录：分析报告格式
+
+> Step 2 分析后更新 `temp/apifox-sync-plan.json` 与 `temp/apifox-sync-plan.md`
+
+### 分析概要
+
+- **分析时间**: {timestamp}
+- **变更文件数**: {changedFileCount}
+- **scan 候选接口数**: {scanCandidateCount}
+- **LLM 确认受影响接口数**: {confirmedCount}
+- **排除接口数**: {excludedCount}
+- **补充遗漏数**: {addedCount}
+
+### 变更源分析
+
+#### {ChangeSourceClassName}
+
+**变更类型**: 字段新增 / 字段删除 / 字段修改 / 方法变更
+
+**变更详情**:
+```
+{git diff 摘要或字段列表}
+```
+
+**业务含义**: {简要说明变更的业务影响}
+
+##### 确认受影响接口
+
+| 方法 | 路径 | 影响类型 | 影响字段 | 分析依据 |
+|------|------|----------|----------|----------|
+| GET | /api/xxx | response | fieldA, fieldB | DTO 含同名字段且通过 copyProperties 进入响应 |
+
+##### 排除的接口
+
+| 方法 | 路径 | 排除原因 |
+|------|------|----------|
+| GET | /api/yyy | 仅日志注释变更，不影响接口契约 |
+
+##### 补充的遗漏
+
+| 方法 | 路径 | 影响类型 | 分析依据 |
+|------|------|----------|----------|
+| POST | /api/zzz | request_body | 直接修改了 RequestBody DTO 字段 |
+
+### 同步建议
+
+**需要同步的接口** — 写入 `syncApis`
+
+**无需同步** — 纯内部 Service/Repository 变更，或确认不影响 API 契约
 
 ## 附录：速查
 
@@ -130,7 +180,7 @@ node dist/index.js branches --json                    # 查询分支（确认前
 node dist/index.js scan --scan-type changed
 node dist/index.js sync --sync-mode incremental       # 需已确认的计划
 node dist/index.js sync --sync-mode full              # 全量，无需计划
-node dist/index.js sync --apifox-branch-name dev      # 按分支名同步
+node dist/index.js sync --save-doc                    # 调试：保存 OpenAPI 到 temp/
 ```
 
 ### 其他文档

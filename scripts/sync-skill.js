@@ -158,6 +158,22 @@ function normalizeDisplayPath(p) {
   return p.replace(/\//g, '\\');
 }
 
+function readAnalysisAppendixFromSkill() {
+  const skillPath = path.join(SKILL_SRC_DIR, 'SKILL.md');
+  const content = fs.readFileSync(skillPath, 'utf8');
+  const startMarker = '## 附录：分析报告格式';
+  const endMarker = '## 附录：速查';
+  const start = content.indexOf(startMarker);
+  if (start === -1) {
+    return '';
+  }
+  const end = content.indexOf(endMarker, start + startMarker.length);
+  if (end === -1) {
+    return content.slice(start).trim();
+  }
+  return content.slice(start, end).trim();
+}
+
 function generateSkillAppendix(target) {
   const toolDist = normalizeDisplayPath(TOOL_DIST);
   const projectRoot = normalizeDisplayPath(path.resolve(target.projectRoot));
@@ -241,13 +257,13 @@ cd ${projectRootDisplay}
 node ${toolDist} workflow
 \`\`\`
 
-产出：\`temp/apifox-sync-plan.json\`、\`temp/apifox-sync-plan.md\`、\`temp/apifox-workflow-summary.json\`
+产出：\`temp/apifox-sync-plan.json\`、\`temp/apifox-sync-plan.md\`（分支列表由 workflow 输出到 stdout）
 
 ### Step 2: LLM 分析
 
 读取 \`temp/apifox-sync-plan.json\` 的 \`gitDiff\`，分析对 Controller 的直接影响及 DTO/Service 间接影响，更新 \`analysis\` 和 \`syncApis\`。
 
-分析报告格式见 [impact-analysis-template.md](impact-analysis-template.md)。
+分析报告格式见下文「附录：分析报告格式」。
 
 ### Step 3: 用户确认
 
@@ -274,13 +290,19 @@ node ${toolDist} sync --sync-mode incremental
 
 > 分析当前代码变更对接口的影响，生成变更文档，我确认后再同步 Apifox
 
+${readAnalysisAppendixFromSkill()}
+
 ${generateSkillAppendix(target)}
 `;
 }
 
-function copyFile(src, dest) {
-  fs.mkdirSync(path.dirname(dest), { recursive: true });
-  fs.copyFileSync(src, dest);
+function removeStaleSkillFiles(destDir) {
+  for (const staleName of ['reference.md', 'impact-analysis-template.md']) {
+    const stalePath = path.join(destDir, staleName);
+    if (fs.existsSync(stalePath)) {
+      fs.unlinkSync(stalePath);
+    }
+  }
 }
 
 function syncToTarget(target) {
@@ -292,24 +314,12 @@ function syncToTarget(target) {
   const destDir = path.join(projectRoot, '.cursor', 'skills', 'api-sync-to-apifox');
   fs.mkdirSync(destDir, { recursive: true });
 
-  const templateSrc = path.join(SKILL_SRC_DIR, 'impact-analysis-template.md');
-  if (fs.existsSync(templateSrc)) {
-    copyFile(templateSrc, path.join(destDir, 'impact-analysis-template.md'));
-  }
-
   fs.writeFileSync(path.join(destDir, 'SKILL.md'), generateProjectSkill(target), 'utf8');
-
-  const staleReference = path.join(destDir, 'reference.md');
-  if (fs.existsSync(staleReference)) {
-    fs.unlinkSync(staleReference);
-  }
+  removeStaleSkillFiles(destDir);
 
   console.log(`✅ 已同步 Skill → ${destDir}`);
   console.log(`   项目: ${target.name}`);
   console.log(`   - SKILL.md`);
-  if (fs.existsSync(templateSrc)) {
-    console.log(`   - impact-analysis-template.md`);
-  }
 }
 
 function main() {

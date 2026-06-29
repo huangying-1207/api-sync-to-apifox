@@ -43,7 +43,8 @@ API 同步到 Apifox 工具使用帮助
 
 产出：
   - temp/apifox-sync-plan.json（status: pending，作废旧确认）
-  - temp/apifox-workflow-summary.json（含 scan 候选 + 分支列表）
+  - temp/apifox-sync-plan.md
+  - 分支列表 JSON 输出到 stdout（供 Agent 读取）
 
 ### sync
 同步后端接口到 Apifox
@@ -63,6 +64,7 @@ API 同步到 Apifox 工具使用帮助
   --apifox-branch-id <ID>               指定 Apifox 迭代分支 ID
   --apifox-branch-name <名称>            指定 Apifox 分支名称（推荐）
   --no-branch-prompt                    跳过交互式分支选择，使用默认主分支
+  --save-doc                            将 OpenAPI 文档保存到 temp/formatted-api-doc.json（调试用）
   --trigger-mode <auto|manual>          触发模式（默认: auto）
   --api-method <方法>                    单独接口同步的 HTTP 方法
   --api-path <路径>                      单独接口同步的路径

@@ -1,10 +1,8 @@
-import fs from 'fs';
 import path from 'path';
 import { configManager } from '../config';
 import { SyncPipeline } from '../core/pipeline';
 import {
   createEmptySyncPlan,
-  ensureTempDir,
   getDefaultPlanPath,
   isConfirmedSyncPlan,
   loadSyncPlan,
@@ -104,39 +102,6 @@ export class ApifoxSyncApp {
     return buildBranchListPayload(branches);
   }
 
-  private writeWorkflowSummary(branchPayload: ReturnType<typeof buildBranchListPayload>): void {
-    ensureTempDir();
-    const planPath = getDefaultPlanPath();
-    let plan: Partial<SyncPlan> = {};
-    if (fs.existsSync(planPath)) {
-      plan = JSON.parse(fs.readFileSync(planPath, 'utf8')) as SyncPlan;
-    }
-
-    const summaryPath = path.join(process.cwd(), 'temp', 'apifox-workflow-summary.json');
-    fs.writeFileSync(
-      summaryPath,
-      JSON.stringify(
-        {
-          generatedAt: new Date().toISOString(),
-          changedFiles: plan.changedFiles || [],
-          scanCandidates: plan.scanCandidates || [],
-          analysisHint: plan.analysis?.summary || '',
-          branches: branchPayload,
-          nextSteps: [
-            'LLM 分析 gitDiff 与变更文件，填写 syncApis / excludedApis',
-            '向用户展示分支名称列表，确认目标分支',
-            '更新 apifox-sync-plan.json：userConfirmed=true、targetBranch、confirmedAt',
-            '执行 sync --sync-mode incremental',
-          ],
-        },
-        null,
-        2,
-      ),
-      'utf8',
-    );
-    appLog(`\n📦 工作流摘要: ${summaryPath}`);
-  }
-
   async listBranches(args: CliArgs): Promise<void> {
     this.applyLogOptions(args);
     const payload = await this.fetchBranchPayload(args);
@@ -234,7 +199,6 @@ export class ApifoxSyncApp {
     try {
       const payload = await this.fetchBranchPayload(args);
       console.log(JSON.stringify(payload, null, 2));
-      this.writeWorkflowSummary(payload);
     } catch (error) {
       appWarn(`分支查询失败: ${(error as Error).message}`);
     }
@@ -360,7 +324,9 @@ export class ApifoxSyncApp {
       }
     }
 
-    this.pipeline.syncer.saveDocToFile(formattedDoc, 'formatted-api-doc.json');
+    if (args['save-doc'] === true) {
+      this.pipeline.syncer.saveDocToFile(formattedDoc, 'formatted-api-doc.json');
+    }
     await this.performSync(
       formattedDoc,
       projectId,

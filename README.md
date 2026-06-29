@@ -65,7 +65,7 @@ node dist/index.js sync --sync-mode full
 
 ### 方式 A：Cursor Agent 工作流（日常开发推荐）
 
-在 Cursor 中提及「接口同步」「Apifox」「代码变更影响接口」，Agent 会加载 Skill（`.cursor/skills/api-sync-to-apifox/SKILL.md`，含完整工作流与附录速查）。分析报告模板见 `impact-analysis-template.md`。
+在 Cursor 中提及「接口同步」「Apifox」「代码变更影响接口」，Agent 会加载 Skill（`.cursor/skills/api-sync-to-apifox/SKILL.md`，含工作流、分析报告格式与附录速查）。
 
 | 步骤 | 动作 | 产出 |
 |------|------|------|
@@ -212,9 +212,9 @@ node dist/index.js mcp
 | 文件 | 说明 |
 |------|------|
 | `apifox-sync-plan.json` | 同步计划（机器可读） |
-| `apifox-sync-plan.md` | 变更文档（人工审阅） |
-| `apifox-workflow-summary.json` | workflow 摘要（候选接口 + 分支列表） |
-| `formatted-api-doc.json` | 格式化后的 OpenAPI 文档 |
+| `apifox-sync-plan.md` | 变更文档（人工审阅，由 JSON 自动生成） |
+| `apifox-branches-cache.json` | 分支列表缓存（内部使用） |
+| `formatted-api-doc.json` | 仅 `--save-doc` 时生成，调试用 OpenAPI 文档 |
 
 ## Cursor Skill 同步到后端项目
 
@@ -293,6 +293,5 @@ npm run test         # 运行测试（pretest 自动 build）
 |------|--------|--------|
 | `README.md` | 人类 | 安装、配置、使用场景、CI |
 | `help.txt` | 终端 | CLI 命令与参数（`node dist/index.js help`） |
-| `.cursor/skills/.../SKILL.md` | Cursor Agent | 同步工作流、确认规则、附录速查 |
-| `.cursor/skills/.../impact-analysis-template.md` | Cursor Agent | LLM 分析报告输出格式 |
+| `.cursor/skills/.../SKILL.md` | Cursor Agent | 同步工作流、分析报告格式、附录速查 |
 | `CLAUDE.md` | 改工具源码的 Agent | 架构、模块、开发约定 |

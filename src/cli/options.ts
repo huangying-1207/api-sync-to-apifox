@@ -21,6 +21,7 @@ export function addWorkflowOptions(cmd: Command): Command {
     .option('--apifox-branch-name <name>', 'Apifox 分支名称')
     .option('--refresh-branches', '强制刷新分支列表')
     .option('--no-branch-prompt', '跳过分支交互选择')
+    .option('--save-doc', '同步时将 OpenAPI 文档保存到 temp/formatted-api-doc.json')
     .option('--quiet', '减少日志输出')
     .option('--json', 'JSON 格式输出（适用于 branches 等）');
 }
@@ -66,6 +67,7 @@ export function commanderOptsToCliArgs(opts: Record<string, unknown>): CliArgs {
 
   if (opts.refreshBranches === true) args['refresh-branches'] = true;
   if (opts.branchPrompt === false) args['no-branch-prompt'] = true;
+  if (opts.saveDoc === true) args['save-doc'] = true;
   if (opts.quiet === true) args.quiet = true;
   if (opts.json === true) args.json = true;
 
