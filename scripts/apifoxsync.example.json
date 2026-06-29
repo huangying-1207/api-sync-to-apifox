@@ -1,0 +1,11 @@
+{
+  "sync-tool-path": "D:/IDEA/api-sync-to-apifox/dist/index.js",
+  "project-name": "my-apifox-project",
+  "apifox-project-id": "",
+  "apifox-api-key": "",
+  "source-type": "code",
+  "source-path": "./src/main/java",
+  "framework": "springboot",
+  "sync-mode": "incremental",
+  "scan-type": "changed"
+}

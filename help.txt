@@ -3,7 +3,7 @@ API 同步到 Apifox 工具使用帮助
 ## 命令
 
 ### config init
-初始化配置文件，自动从 MCP 凭据加载项目信息
+初始化配置文件；Apifox 凭据与同步项均写入 .apifoxsync.json
 
 用法：
   api-sync-to-apifox config init [--source-path <路径>] [--framework <框架>]
@@ -79,7 +79,7 @@ API 同步到 Apifox 工具使用帮助
   api-sync-to-apifox mcp
 
 MCP 命令：
-  connect <名称> <项目ID> <API密钥>     连接 Apifox 项目
+  connect <名称> <项目ID> <API密钥>     连接 Apifox 项目（凭据写入 .apifoxsync.json）
   disconnect <名称>                      断开连接
   status                                 显示连接状态
   scan [项目名] [--参数...]              扫描接口变更（等同 CLI scan）

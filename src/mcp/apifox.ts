@@ -1,49 +1,62 @@
 /**
- * Apifox MCP 连接管理
+ * Apifox MCP 连接管理（凭据统一读写 .apifoxsync.json）
  */
 
-import fs from 'fs';
-import path from 'path';
+import { configManager } from '../config';
 import { apifoxClient } from '../clients/apifoxClient';
 import { extractApisFromOpenApiDoc } from '../utils/openapi/openapiWalk';
 
 class ApifoxMCP {
   private connections: Map<string, any>;
-  private credentialsPath: string;
 
   constructor() {
     this.connections = new Map();
-    this.credentialsPath = path.join(process.cwd(), '.apifox-credentials.json');
     this.loadCredentials();
   }
 
-  loadCredentials(verbose = false): void {
-    try {
-      if (fs.existsSync(this.credentialsPath)) {
-        const credentials = JSON.parse(fs.readFileSync(this.credentialsPath, 'utf8'));
-        Object.keys(credentials).forEach((projectName) => {
-          this.connections.set(projectName, credentials[projectName]);
-        });
-        if (verbose && this.connections.size > 0) {
-          console.log(`已加载 ${this.connections.size} 个项目的连接信息`);
-        }
-      }
-    } catch (error) {
-      if (verbose) {
-        console.warn('加载凭据文件失败:', (error as Error).message);
-      }
+  private registerConnection(projectName: string, projectId: string, apiKey: string, extra: Record<string, unknown> = {}): void {
+    this.connections.set(projectName, {
+      projectId,
+      apiKey,
+      ...extra,
+    });
+  }
+
+  private loadFromApifoxSync(): boolean {
+    const config = configManager.readConfig();
+    if (!config) return false;
+
+    const projectName = config['project-name'];
+    const projectId = config['apifox-project-id'];
+    const apiKey = config['apifox-api-key'];
+    if (!projectName || !projectId || !apiKey) return false;
+
+    this.registerConnection(projectName, projectId, apiKey);
+    return true;
+  }
+
+  private saveToApifoxSync(projectName: string, projectId: string, apiKey: string): void {
+    configManager.setConfig('project-name', projectName);
+    configManager.setConfig('apifox-project-id', projectId);
+    configManager.setConfig('apifox-api-key', apiKey);
+    configManager.saveConfig();
+  }
+
+  private clearApifoxSyncIfMatches(projectName: string): void {
+    const config = configManager.readConfig();
+    if (config?.['project-name'] === projectName) {
+      configManager.setConfig('apifox-project-id', '');
+      configManager.setConfig('apifox-api-key', '');
+      configManager.saveConfig();
     }
   }
 
-  saveCredentials(): void {
-    const credentials = Array.from(this.connections.entries()).reduce(
-      (acc, [projectName, config]) => {
-        acc[projectName] = config;
-        return acc;
-      },
-      {} as Record<string, any>,
-    );
-    fs.writeFileSync(this.credentialsPath, JSON.stringify(credentials, null, 2));
+  loadCredentials(verbose = false): void {
+    this.connections.clear();
+    this.loadFromApifoxSync();
+    if (verbose && this.connections.size > 0) {
+      console.log(`已从 .apifoxsync.json 加载 ${this.connections.size} 个 Apifox 项目连接`);
+    }
   }
 
   async connect(projectName: string, projectId: string, apiKey: string): Promise<any> {
@@ -53,13 +66,12 @@ class ApifoxMCP {
       const projectInfo = await apifoxClient.getProjectInfo(projectId, apiKey);
       console.log('✅ 连接成功');
 
-      this.connections.set(projectName, {
-        projectId,
-        apiKey,
+      this.registerConnection(projectName, projectId, apiKey, {
         projectInfo,
         connectedAt: new Date(),
       });
-      this.saveCredentials();
+      this.saveToApifoxSync(projectName, projectId, apiKey);
+      console.log('凭据已写入 .apifoxsync.json');
       return projectInfo;
     } catch (error) {
       console.error('❌ 连接失败:', (error as Error).message);
@@ -70,7 +82,7 @@ class ApifoxMCP {
   disconnect(projectName: string): void {
     if (this.connections.has(projectName)) {
       this.connections.delete(projectName);
-      this.saveCredentials();
+      this.clearApifoxSyncIfMatches(projectName);
       console.log(`已断开与项目 "${projectName}" 的连接`);
     } else {
       console.warn(`项目 "${projectName}" 未连接`);

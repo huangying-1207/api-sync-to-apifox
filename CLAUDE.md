@@ -57,7 +57,9 @@ CLI args → Config → Scanner (Git diff + 框架解析)
 - `scan` 会将计划重置为 `pending`
 - OpenAPI 字段说明必须为中文（`formatter.ts` 负责生成默认值）
 - 配置文件搜索：`.apifoxsync.json` → `.claude/apifoxsync.json` → `config/apifoxsync.json` → 用户主目录
-- 凭据：`.apifox-credentials.json`；临时产物：`temp/apifox-sync-plan.*`、`apifox-branches-cache.json`；`formatted-api-doc.json` 仅 `--save-doc` 时生成
+- 凭据与配置统一在 `.apifoxsync.json`（不提交 Git）
+- 临时产物：`temp/apifox-sync-plan.*`、`apifox-branches-cache.json`；`formatted-api-doc.json` 仅 `--save-doc` 时生成
+- Skill 同步：`sync-skill` 复制便携 SKILL.md + 写入目标项目 `sync-tool-path`
 
 **核心模块：**
 

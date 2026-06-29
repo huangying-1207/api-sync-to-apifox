@@ -14,24 +14,30 @@ export function handleConfigInit(stripArgv: string[]): void {
     }
   }
 
-  const connectedProjects = apifoxMCP.getConnectedProjects();
-  if (connectedProjects.length > 0) {
-    const existingProjectName = configManager.getConfig('project-name') as string | undefined;
-    const projectName =
-      existingProjectName && connectedProjects.includes(existingProjectName)
-        ? existingProjectName
-        : connectedProjects[0];
-    const connectionInfo = apifoxMCP.getConnectionInfo(projectName);
-    initArgs['project-name'] = projectName;
-    initArgs['apifox-project-id'] = connectionInfo.projectId;
-    initArgs['apifox-api-key'] = connectionInfo.apiKey;
-    console.log(`已从凭据中加载项目 "${projectName}" 的连接信息`);
+  apifoxMCP.loadCredentials();
+  const existingConfig = configManager.getAllConfig() as Record<string, string>;
+
+  if (existingConfig['apifox-project-id'] && existingConfig['apifox-api-key']) {
+    console.log(`已从 .apifoxsync.json 加载 Apifox 凭据（项目: ${existingConfig['project-name'] || '未命名'}）`);
   } else {
-    console.warn('未检测到 MCP 连接信息，请先执行 mcp connect 连接 Apifox 项目');
+    const connectedProjects = apifoxMCP.getConnectedProjects();
+    if (connectedProjects.length > 0) {
+      const existingProjectName = existingConfig['project-name'];
+      const projectName =
+        existingProjectName && connectedProjects.includes(existingProjectName)
+          ? existingProjectName
+          : connectedProjects[0];
+      const connectionInfo = apifoxMCP.getConnectionInfo(projectName);
+      initArgs['project-name'] = projectName;
+      initArgs['apifox-project-id'] = connectionInfo.projectId;
+      initArgs['apifox-api-key'] = connectionInfo.apiKey;
+      console.log(`已从连接信息加载项目 "${projectName}"`);
+    } else {
+      console.warn('未检测到 Apifox 凭据，请执行 mcp connect 或直接在 .apifoxsync.json 中填写 apifox-project-id / apifox-api-key');
+    }
   }
 
   const defaultConfig = ConfigValidator.generateDefaultConfig();
-  const existingConfig = configManager.getAllConfig();
   const mergedConfig = { ...defaultConfig, ...existingConfig, ...initArgs };
 
   configManager.setConfig('apifox-project-id', mergedConfig['apifox-project-id']);
@@ -43,6 +49,7 @@ export function handleConfigInit(stripArgv: string[]): void {
   if (mergedConfig['sync-mode']) configManager.setConfig('sync-mode', mergedConfig['sync-mode']);
   if (mergedConfig['scan-type']) configManager.setConfig('scan-type', mergedConfig['scan-type']);
   if (mergedConfig['trigger-mode']) configManager.setConfig('trigger-mode', mergedConfig['trigger-mode']);
+  if (mergedConfig['sync-tool-path']) configManager.setConfig('sync-tool-path', mergedConfig['sync-tool-path']);
   configManager.saveConfig();
   console.log(`配置文件已更新: ${path.join(process.cwd(), '.apifoxsync.json')}`);
 }

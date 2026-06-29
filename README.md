@@ -29,7 +29,7 @@ npm run build
 node dist/index.js mcp connect <项目名> <项目ID> <API密钥>
 ```
 
-连接信息保存在 `.apifox-credentials.json`（已 gitignore）。
+凭据会写入 `.apifoxsync.json`（与同步配置同一文件，已 gitignore）。
 
 ### 2. 初始化配置
 
@@ -37,7 +37,7 @@ node dist/index.js mcp connect <项目名> <项目ID> <API密钥>
 node dist/index.js config init --source-path <项目源码路径> --framework springboot
 ```
 
-自动从 MCP 凭据加载 `apifox-project-id`、`apifox-api-key`，生成 `.apifoxsync.json`（已 gitignore）。
+自动从 `.apifoxsync.json` 或 `mcp connect` 加载 `apifox-project-id`、`apifox-api-key`，生成/更新 `.apifoxsync.json`。
 
 ### 3. 扫描接口变更
 
@@ -159,18 +159,19 @@ node dist/index.js sync --apis "GET:/api/users,POST:/api/users"
 
 配置文件搜索顺序：`.apifoxsync.json` → `.claude/apifoxsync.json` → `config/apifoxsync.json` → 用户主目录。
 
-| 配置项 | 必填 | 说明 | 可选值 | 默认值 |
-|--------|------|------|--------|--------|
-| source-type | 是 | 数据源类型 | `swagger` \| `code` | `code` |
-| source-path | 是 | 代码目录、Swagger URL 或本地 OpenAPI 文件 | - | `./src` |
-| framework | 条件必填 | 后端框架（source-type 为 code 时） | `springboot` \| `nodejs` \| `django` | `springboot` |
-| apifox-project-id | 条件必填 | Apifox 项目 ID（无 project-name 时） | - | - |
-| apifox-api-key | 条件必填 | Apifox API 密钥（无 project-name 时） | - | - |
-| project-name | 否 | MCP 已连接项目名（可替代 ID/密钥） | - | - |
-| sync-mode | 否 | 同步模式 | `incremental` \| `full` | `incremental` |
-| scan-type | 否 | 扫描类型 | `all` \| `changed` | `changed` |
-| trigger-mode | 否 | 触发模式 | `auto` \| `manual` | `auto` |
-| apifox-branch-name | 否 | 指定 Apifox 分支名称 | - | 主分支 |
+| 配置项 | 必填 | 说明 |
+|--------|------|------|
+| `sync-tool-path` | 否 | 本机 `api-sync-to-apifox/dist/index.js` 绝对路径 |
+| `project-name` | 否 | Apifox 项目名 / MCP 连接名 |
+| `apifox-project-id` | 条件必填 | Apifox 项目 ID（无 CLI 传参时） |
+| `apifox-api-key` | 条件必填 | Apifox API 密钥 |
+| `source-path` | 是 | 源码目录（相对项目根） |
+| `source-type` | 是 | `code` 或 `swagger` |
+| `framework` | 条件必填 | `springboot` / `nodejs` / `django` |
+| `sync-mode` | 否 | `incremental` 或 `full` |
+| `scan-type` | 否 | `all` 或 `changed` |
+
+> 以上字段均在 **`.apifoxsync.json` 一个文件**中，含凭据与本机路径，**不要提交 Git**。参考：`scripts/apifoxsync.example.json`
 
 ## 支持的框架
 
@@ -218,12 +219,12 @@ node dist/index.js mcp
 
 ## Cursor Skill 同步到后端项目
 
-工具更新后，将 Skill 复制到任意后端项目：
+Skill 为**便携模板**（不写死路径），可提交到 GitLab；本机工具路径写入 `.apifoxsync.json` 的 `sync-tool-path`（每人不同，不提交 Git）。
 
 ```bash
 npm run build
-npm run sync-skill -- --path D:/IDEA/your-backend-project
-npm run sync-skill -- --path D:/IDEA/proj-a --path D:/IDEA/proj-b
+node scripts/sync-skill.js --path D:/IDEA/your-backend-project
+node scripts/sync-skill.js --path D:/IDEA/proj-a --path D:/IDEA/proj-b
 
 # 或批量配置
 cp scripts/skill-targets.example.json scripts/skill-targets.json
@@ -232,7 +233,18 @@ npm run sync-skill -- --target my-backend
 npm run sync-skill -- --list
 ```
 
-`skill-targets.json` 为本地配置（已 gitignore）。若目标项目已有 `.apifoxsync.json`，会自动读取 `source-path`、`framework`、`project-name`。
+`sync-skill` 会：
+1. 复制 `.cursor/skills/api-sync-to-apifox/SKILL.md` 到目标项目（全员相同，可提交 Git）
+2. 合并写入目标项目 `.apifoxsync.json` 的 `sync-tool-path`（指向你本机的 `dist/index.js`）
+
+后端项目建议 `.gitignore`（仅需忽略一个配置文件）：
+
+```gitignore
+.apifoxsync.json
+temp/
+```
+
+`skill-targets.json` 为工具仓库本地配置（已 gitignore），用于批量同步多个项目路径。
 
 ## CI/CD 集成
 

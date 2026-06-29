@@ -9,10 +9,30 @@ description: >-
 
 **影响分析完全由 LLM 负责**，工具只做：Git 变更检测、Controller 扫描、变更文档生成、Apifox 同步。
 
+## 路径约定（执行前必读）
+
+1. **工作目录** = 后端项目根目录（Cursor 工作区根），所有命令在此执行。
+2. **读取** `.apifoxsync.json`（本地唯一配置文件，含凭据与本机路径，不提交 Git）：
+
+| 配置项 | 说明 |
+|--------|------|
+| `sync-tool-path` | 本机 `api-sync-to-apifox` 的 `dist/index.js` **绝对路径**（每人不同） |
+| `project-name` | Apifox 项目名 |
+| `apifox-project-id` | Apifox 项目 ID |
+| `apifox-api-key` | Apifox API 密钥 |
+| `source-path` | 源码目录（相对项目根，如 `./src/main/java`） |
+| `framework` | `springboot` / `nodejs` / `django` |
+
+3. 若缺少 `sync-tool-path`，提示用户在项目根执行 `npm run sync-skill`（在工具仓库）或手动写入配置。
+4. **命令格式**：`node <sync-tool-path> <子命令>` — 工具会自动合并 `.apifoxsync.json` 中的其他项。
+
+> 下文用 `$TOOL` 表示 `sync-tool-path`，`$PROJECT` 表示 `project-name`。
+
 ## 工作流
 
 ```
-- [ ] Step 1: scan → 生成变更文档草稿
+- [ ] Step 0: 读取 .apifoxsync.json，确认 sync-tool-path 有效
+- [ ] Step 1: workflow / scan → 生成变更文档草稿
 - [ ] Step 2: LLM 分析 git diff → 填写 syncApis
 - [ ] Step 3: 展示文档 → 询问 Apifox 目标分支 → 等用户明确确认
 - [ ] Step 4: 更新计划为 confirmed（含 targetBranch）→ sync
@@ -21,7 +41,7 @@ description: >-
 ## Step 1: workflow（推荐）或 scan
 
 ```bash
-node dist/index.js workflow --project-name <项目名>
+node $TOOL workflow --project-name $PROJECT
 ```
 
 等价于 `scan` + `branches --json`（分支列表输出到 stdout）。
@@ -29,8 +49,8 @@ node dist/index.js workflow --project-name <项目名>
 或分步：
 
 ```bash
-node dist/index.js scan --source-type code --source-path <路径> --framework springboot --scan-type changed
-node dist/index.js branches --json
+node $TOOL scan --scan-type changed
+node $TOOL branches --json
 ```
 
 > scan 会强制将计划重置为 `pending`，作废旧确认。
@@ -59,7 +79,7 @@ node dist/index.js branches --json
 1. **查询分支**（展示给用户前执行）：
 
 ```bash
-node dist/index.js branches --json
+node $TOOL branches --json
 ```
 
 2. 向用户展示分支**名称**列表（不要展示 ID），询问同步到哪个分支，默认主分支。
@@ -79,16 +99,10 @@ node dist/index.js branches --json
 }
 ```
 
-主分支示例（项目主分支可能叫 `master` 而非 `main`）：
-
-```json
-"targetBranch": { "id": 1234567, "name": "master", "isMain": true }
-```
-
 执行：
 
 ```bash
-node dist/index.js sync --sync-mode incremental
+node $TOOL sync --sync-mode incremental
 ```
 
 未确认时 sync 拒绝执行。调试时可加 `--save-doc` 将 OpenAPI 文档写入 `temp/formatted-api-doc.json`。
@@ -97,6 +111,7 @@ node dist/index.js sync --sync-mode incremental
 
 - 不要在用户确认前执行 sync
 - 不要依赖静态依赖图分析影响（已移除）
+- 不要在 Skill 或 Git 中写死本机绝对路径
 
 ## 附录：分析报告格式
 
@@ -175,16 +190,31 @@ Git diff → changedFiles → scanCandidates → apifox-sync-plan.json
 ### 常用命令
 
 ```bash
-node dist/index.js workflow --project-name <项目名>   # scan + branches 一键
-node dist/index.js branches --json                    # 查询分支（确认前）
-node dist/index.js scan --scan-type changed
-node dist/index.js sync --sync-mode incremental       # 需已确认的计划
-node dist/index.js sync --sync-mode full              # 全量，无需计划
-node dist/index.js sync --save-doc                    # 调试：保存 OpenAPI 到 temp/
+node $TOOL workflow --project-name $PROJECT
+node $TOOL branches --json
+node $TOOL scan --scan-type changed
+node $TOOL sync --sync-mode incremental
+node $TOOL sync --sync-mode full
+node $TOOL sync --save-doc
 ```
 
-### 其他文档
+### 首次接入 / 更新 Skill
 
-- 人类用户手册：`README.md`
-- CLI 参数详情：`help.txt`（`node dist/index.js help`）
-- 改工具源码：`CLAUDE.md`
+在后端项目根目录配置 `.apifoxsync.json`（`sync-skill` 会自动写入 `sync-tool-path`）：
+
+```json
+{
+  "sync-tool-path": "<本机 api-sync-to-apifox/dist/index.js 绝对路径>",
+  "project-name": "<Apifox 项目名>",
+  "source-type": "code",
+  "source-path": "./src/main/java",
+  "framework": "springboot"
+}
+```
+
+从工具仓库同步 Skill 到本项目（在工具仓库执行，路径换成你的本机目录）：
+
+```bash
+npm run build
+node scripts/sync-skill.js --path <后端项目根目录>
+```

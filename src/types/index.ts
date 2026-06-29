@@ -117,6 +117,8 @@ export interface Config {
   'apifox-branch-name'?: string;
   /** 可选分支列表，用于同步前选择；可在 Apifox「管理迭代分支」中查看 ID */
   'apifox-branches'?: ApifoxBranch[];
+  /** 本机 api-sync-to-apifox 入口（dist/index.js 绝对路径），每人路径不同，不提交 Git */
+  'sync-tool-path'?: string;
 }
 
 /** CLI 运行时参数（配置文件 + 命令行合并后） */
