@@ -18,6 +18,7 @@ temp/
 # Configuration files
 .apifox/
 .apifoxsync.json
+.apifox-credentials.json
 scripts/skill-targets.json
 .env
 .env.local
