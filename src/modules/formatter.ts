@@ -7,6 +7,7 @@ import {
 } from '../utils/helper';
 import { ApiInfo, OpenApiDocument } from '../types';
 import { appLog } from '../utils/logger';
+import { isResponseReturnType } from '../utils/java/responseType';
 
 export interface FormatOpenApiResult {
   doc: any;
@@ -16,6 +17,7 @@ export interface FormatOpenApiResult {
 class ApiFormatter {
   private dtoSchemas: any;
   private unformattedCount: number;
+  private readonly maxSchemaDepth = 5;
 
   constructor() {
     this.dtoSchemas = {};
@@ -26,8 +28,11 @@ class ApiFormatter {
     this.dtoSchemas = schemas || {};
   }
 
-  javaTypeToOpenApi(javaType: string, visited: Set<string> = new Set()): any {
+  javaTypeToOpenApi(javaType: string, visited: Set<string> = new Set(), depth = 0): any {
     if (!javaType) return { type: 'string' };
+    if (depth > this.maxSchemaDepth) {
+      return { type: 'object', description: '嵌套层级过深，已省略子字段' };
+    }
 
     const t = javaType.trim();
 
@@ -51,14 +56,24 @@ class ApiFormatter {
     }
     const listMatch = t.match(/^(?:List|Set|Collection)<(.+)>$/);
     if (listMatch) {
-      const itemType = this.javaTypeToOpenApi(listMatch[1], visited);
-      return { type: 'array', items: itemType.type === 'object' ? { type: 'object' } : itemType };
+      const itemType = listMatch[1].trim();
+      if (this.dtoSchemas[itemType]) {
+        return {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: this.generateObjectProperties(itemType, undefined, visited, depth + 1),
+          },
+        };
+      }
+      const itemSchema = this.javaTypeToOpenApi(itemType, visited, depth + 1);
+      return { type: 'array', items: itemSchema.type === 'object' ? { type: 'object' } : itemSchema };
     }
     if (this.dtoSchemas[t]) {
       if (visited.has(t)) {
         return { type: 'object', description: `${t} (循环引用)` };
       }
-      return { type: 'object', properties: this.generateObjectProperties(t, undefined, new Set([...visited, t])) };
+      return { type: 'object', properties: this.generateObjectProperties(t, undefined, visited, depth + 1) };
     }
     return { type: 'object' };
   }
@@ -243,18 +258,114 @@ class ApiFormatter {
     return changed;
   }
 
+  private buildLegacyWrapperProperties(dataSchema: any): Record<string, unknown> {
+    return {
+      code: { type: 'integer', description: '响应码' },
+      message: { type: 'string', description: '响应消息' },
+      data: dataSchema,
+    };
+  }
+
+  private buildResponseEnvelopeProperties(dataSchema: any): Record<string, unknown> {
+    const responseFields = this.dtoSchemas.Response;
+    const properties: Record<string, unknown> = {};
+
+    if (responseFields?.code) {
+      properties.code = { ...this.javaTypeToOpenApi(responseFields.code), description: '响应码' };
+    } else {
+      properties.code = { type: 'string', description: '响应码' };
+    }
+
+    if (responseFields?.msg) {
+      properties.msg = { ...this.javaTypeToOpenApi(responseFields.msg), description: '响应消息' };
+    } else {
+      properties.msg = { type: 'string', description: '响应消息' };
+    }
+
+    properties.data = dataSchema;
+    return properties;
+  }
+
+  private generateDataSchema(dataType: string | undefined, api: ApiInfo, visited: Set<string> = new Set(), depth = 0): any {
+    if (!dataType) {
+      return { type: 'object', description: '响应数据' };
+    }
+
+    const mapMatch = dataType.match(/^Map<([^,]+),\s*(.+)>$/);
+    if (mapMatch) {
+      const valueType = mapMatch[2].trim();
+      const valueSchema = this.schemaForJavaType(valueType, api, visited, depth + 1);
+      return {
+        type: 'object',
+        description: `响应数据 (${dataType})`,
+        additionalProperties: valueSchema,
+      };
+    }
+
+    if (dataType.startsWith('List<') || dataType.startsWith('Set<') || dataType.startsWith('Collection<')) {
+      const genericTypeMatch = dataType.match(/<([^>]+)>/);
+      const genericType = genericTypeMatch ? genericTypeMatch[1].trim() : undefined;
+      return {
+        type: 'array',
+        description: `响应数据 (${dataType})`,
+        items: genericType ? this.schemaForJavaType(genericType, api, visited, depth + 1) : { type: 'object' },
+      };
+    }
+
+    if (dataType === 'JSONObject') {
+      return {
+        type: 'object',
+        description: '响应数据（JSON 对象）',
+        properties: this.generateObjectProperties(dataType, api, visited, depth + 1),
+        additionalProperties: true,
+      };
+    }
+
+    if (['String', 'Integer', 'Long', 'Boolean', 'Double', 'Float', 'int', 'long', 'boolean'].includes(dataType)) {
+      return {
+        ...this.javaTypeToOpenApi(dataType, visited, depth),
+        description: `响应数据 (${dataType})`,
+      };
+    }
+
+    return {
+      type: 'object',
+      description: `响应数据 (${dataType})`,
+      properties: this.generateObjectProperties(dataType, api, visited, depth + 1),
+    };
+  }
+
+  private schemaForJavaType(javaType: string, api: ApiInfo, visited: Set<string> = new Set(), depth = 0): any {
+    const openApiType = this.javaTypeToOpenApi(javaType, visited, depth);
+    if (openApiType.type === 'object' && openApiType.properties) {
+      return { type: 'object', properties: openApiType.properties };
+    }
+    if (this.dtoSchemas[javaType]) {
+      return {
+        type: 'object',
+        properties: this.generateObjectProperties(javaType, api, visited, depth + 1),
+      };
+    }
+    return openApiType;
+  }
+
   generateResponseSchema(returnType: string, api: ApiInfo): any {
+    if (isResponseReturnType(returnType)) {
+      return {
+        type: 'object',
+        properties: this.buildResponseEnvelopeProperties(
+          this.generateDataSchema(api.responseDataType, api),
+        ),
+      };
+    }
+
     if (!returnType || ['String', 'Integer', 'Long', 'Boolean', 'Double', 'Float'].includes(returnType)) {
       return {
         type: 'object',
-        properties: {
-          code: { type: 'integer', description: '响应码' },
-          message: { type: 'string', description: '响应消息' },
-          data: {
-            type: returnType && returnType.toLowerCase() === 'string' ? 'string' : 'integer',
-            description: '响应数据',
-          },
-        },
+        properties: this.buildLegacyWrapperProperties({
+          type: returnType && returnType.toLowerCase() === 'string' ? 'string' : 'integer',
+          description: '响应数据',
+        }),
       };
     }
 
@@ -263,70 +374,63 @@ class ApiFormatter {
       if (!genericTypeMatch) {
         return {
           type: 'object',
-          properties: {
-            code: { type: 'integer', description: '响应码' },
-            message: { type: 'string', description: '响应消息' },
-            data: { type: 'array', description: '响应数据列表', items: { type: 'object' } },
-          },
+          properties: this.buildLegacyWrapperProperties({
+            type: 'array',
+            description: '响应数据列表',
+            items: { type: 'object' },
+          }),
         };
       }
       const genericType = genericTypeMatch[1];
       return {
         type: 'object',
-        properties: {
-          code: { type: 'integer', description: '响应码' },
-          message: { type: 'string', description: '响应消息' },
-          data: {
-            type: 'array',
-            description: '响应数据列表',
-            items: {
-              type: 'object',
-              properties: this.generateObjectProperties(genericType, api),
-            },
+        properties: this.buildLegacyWrapperProperties({
+          type: 'array',
+          description: '响应数据列表',
+          items: {
+            type: 'object',
+            properties: this.generateObjectProperties(genericType, api),
           },
-        },
+        }),
       };
     }
 
     if (returnType === 'JSONObject') {
       return {
         type: 'object',
-        properties: {
-          code: { type: 'integer', description: '响应码' },
-          message: { type: 'string', description: '响应消息' },
-          data: {
-            type: 'object',
-            description: '响应数据（JSON 对象）',
-            properties: this.generateObjectProperties(returnType, api),
-            additionalProperties: true,
-          },
-        },
+        properties: this.buildLegacyWrapperProperties({
+          type: 'object',
+          description: '响应数据（JSON 对象）',
+          properties: this.generateObjectProperties(returnType, api),
+          additionalProperties: true,
+        }),
       };
     }
 
     return {
       type: 'object',
-      properties: {
-        code: { type: 'integer', description: '响应码' },
-        message: { type: 'string', description: '响应消息' },
-        data: {
-          type: 'object',
-          description: `响应数据 (${returnType})`,
-          properties: this.generateObjectProperties(returnType, api),
-        },
-      },
+      properties: this.buildLegacyWrapperProperties({
+        type: 'object',
+        description: `响应数据 (${returnType})`,
+        properties: this.generateObjectProperties(returnType, api),
+      }),
     };
   }
 
-  generateObjectProperties(objectType: string, api?: ApiInfo, visited: Set<string> = new Set()): any {
+  generateObjectProperties(objectType: string, api?: ApiInfo, visited: Set<string> = new Set(), depth = 0): any {
+    if (depth > this.maxSchemaDepth || visited.has(objectType)) {
+      return {};
+    }
+
     const props: any = {};
     const baseObjectType = api?.baseType ? api.baseType : objectType;
+    const nextVisited = new Set([...visited, objectType]);
 
     if (this.dtoSchemas[baseObjectType]) {
       const fields = this.dtoSchemas[baseObjectType];
       Object.keys(fields).forEach((fieldName) => {
         props[fieldName] = {
-          ...this.javaTypeToOpenApi(fields[fieldName], visited),
+          ...this.javaTypeToOpenApi(fields[fieldName], nextVisited, depth + 1),
           description: getDefaultPropDescription(fieldName),
         };
       });

@@ -8,7 +8,7 @@ export function extractResponseFieldNamesFromApi(api: ApiInfo, dtoSchemas: DtoSc
     fields.push(...Object.keys(api.mapFields));
   }
 
-  const dtoType = api.baseType || api.returnType;
+  const dtoType = api.responseDataType || api.baseType || api.returnType;
   if (dtoType) {
     const genericMatch = dtoType.match(/^(?:List|Set|Collection)<(.+)>$/);
     const typeName = genericMatch ? genericMatch[1] : dtoType;

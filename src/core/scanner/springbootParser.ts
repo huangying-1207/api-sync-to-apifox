@@ -3,10 +3,12 @@ import path from 'path';
 import { sync as globSync } from 'glob';
 import { ApiInfo } from '../../types';
 import { extractResponseFieldNamesFromApi } from '../../utils/openapi/openapiWalk';
+import { extractResponseGenericType, isResponseReturnType } from '../../utils/java/responseType';
 import { isTestOrNonApiSourceFile } from './frameworks';
 
 /** Spring Boot Controller / DTO 解析逻辑 */
 export class SpringBootParser {
+  private methodReturnTypes: Record<string, string[]> = {};
   extractPathFromAnnotation(raw: string): string {
     raw = raw.trim();
 
@@ -154,6 +156,121 @@ export class SpringBootParser {
     return returnType;
   }
 
+  indexMethodReturnTypes(content: string): void {
+    const pattern = /public\s+([\w<>,\s\[\].]+?)\s+(\w+)\s*\(/g;
+    let match;
+    while ((match = pattern.exec(content)) !== null) {
+      const returnType = match[1].trim();
+      const methodName = match[2];
+      if (['class', 'interface', 'enum', 'if', 'for', 'while', 'switch'].includes(methodName)) continue;
+
+      if (!Object.prototype.hasOwnProperty.call(this.methodReturnTypes, methodName)) {
+        this.methodReturnTypes[methodName] = [];
+      }
+      if (!this.methodReturnTypes[methodName].includes(returnType)) {
+        this.methodReturnTypes[methodName].push(returnType);
+      }
+    }
+  }
+
+  pickBestReturnType(candidates: string[]): string {
+    const filtered = candidates.filter((type) => type !== 'void' && type !== 'Object');
+    return (filtered.length > 0 ? filtered : candidates)[0];
+  }
+
+  extractResponseDataExpression(methodContent: string): string | undefined {
+    const clean = methodContent.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+
+    const sucMatch = clean.match(/Response\.suc\s*\(\s*([\s\S]+?)\s*\)/);
+    if (sucMatch) return sucMatch[1].trim();
+
+    const builderIndex = clean.search(/Response\.builder\s*\(\s*\)/);
+    if (builderIndex === -1) return undefined;
+
+    const afterBuilder = clean.slice(builderIndex);
+    const buildMatch = afterBuilder.match(/\.build\s*\(\s*\)/);
+    if (!buildMatch || buildMatch.index === undefined) return undefined;
+
+    const chain = afterBuilder.slice(0, buildMatch.index);
+    const dataIndex = chain.indexOf('.data(');
+    if (dataIndex === -1) return undefined;
+
+    const argStart = dataIndex + '.data('.length;
+    let depth = 1;
+    let i = argStart;
+    while (i < chain.length && depth > 0) {
+      const ch = chain[i];
+      if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+      i++;
+    }
+    if (depth !== 0) return undefined;
+    return chain.slice(argStart, i - 1).trim();
+  }
+
+  resolveExpressionType(expr: string, methodContent: string): string | undefined {
+    if (!expr || expr === 'null') return undefined;
+
+    const methodCallMatch = expr.match(/(?:[\w$]+\.)+(\w+)\s*\(/);
+    if (methodCallMatch) {
+      const methodName = methodCallMatch[1];
+      const candidates = Object.prototype.hasOwnProperty.call(this.methodReturnTypes, methodName)
+        ? this.methodReturnTypes[methodName]
+        : undefined;
+      if (candidates && candidates.length > 0) {
+        return candidates.length === 1 ? candidates[0] : this.pickBestReturnType(candidates);
+      }
+    }
+
+    if (/^\w+$/.test(expr)) {
+      const varDecl = methodContent.match(
+        new RegExp(`(?:@\\w+(?:\\([^)]*\\))?\\s+)?([\\w<>,\\s\\[\\].]+?)\\s+${expr}\\b`),
+      );
+      if (varDecl) return varDecl[1].trim();
+    }
+
+    return undefined;
+  }
+
+  inferResponseDataType(methodContent: string): string | undefined {
+    const dataExpr = this.extractResponseDataExpression(methodContent);
+    if (!dataExpr) return undefined;
+    return this.resolveExpressionType(dataExpr, methodContent);
+  }
+
+  applyResponseDataType(api: ApiInfo, methodContent: string): void {
+    if (!api.returnType || !isResponseReturnType(api.returnType)) return;
+
+    const genericType = extractResponseGenericType(api.returnType);
+    if (genericType) {
+      api.responseDataType = genericType;
+    }
+
+    const inferred = this.inferResponseDataType(methodContent);
+    if (inferred) {
+      api.responseDataType = inferred;
+    }
+
+    const dataType = api.responseDataType;
+    if (!dataType) return;
+
+    const mapMatch = dataType.match(/^Map<[^,]+,\s*(.+)>$/);
+    if (mapMatch) {
+      api.baseType = mapMatch[1].trim();
+      return;
+    }
+
+    const listMatch = dataType.match(/^(?:List|Set|Collection)<(.+)>$/);
+    if (listMatch) {
+      api.baseType = listMatch[1].trim();
+      return;
+    }
+
+    if (dataType !== 'JSONObject') {
+      api.baseType = dataType;
+    }
+  }
+
   extractMapFields(methodContent: string): Record<string, { type: string; format?: string }> {
     const fields: Record<string, { type: string; format?: string }> = {};
     let cleanContent = methodContent.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
@@ -220,6 +337,18 @@ export class SpringBootParser {
     findGitRoot: (dir: string) => string,
   ): Record<string, Record<string, string>> {
     const classSchemas: Record<string, Record<string, string>> = {};
+    this.methodReturnTypes = {};
+
+    try {
+      const allJavaFiles = globSync(sourcePath.replace(/\\/g, '/') + '/**/*.java');
+      for (const file of allJavaFiles) {
+        if (isTestOrNonApiSourceFile(file)) continue;
+        this.indexMethodReturnTypes(fs.readFileSync(file, 'utf8'));
+      }
+    } catch {
+      console.warn('方法返回类型索引失败，Response.data 推断可能不完整');
+    }
+
     const dtoScope = scopedFiles ?? this.collectDtoScanScope(sourcePath, changedFiles, findGitRoot);
 
     try {
@@ -248,6 +377,22 @@ export class SpringBootParser {
 
         if (Object.keys(fields).length > 0) {
           classSchemas[className] = fields;
+        }
+      }
+
+      for (const file of javaFiles) {
+        const content = fs.readFileSync(file, 'utf8');
+        const className = path.basename(file, '.java');
+        const fields = classSchemas[className];
+        if (!fields) continue;
+
+        const extendsMatch = content.match(/class\s+\w+\s+extends\s+(\w+)/);
+        if (extendsMatch) {
+          const parentName = extendsMatch[1];
+          const parentFields = classSchemas[parentName];
+          if (parentFields) {
+            classSchemas[className] = { ...parentFields, ...fields };
+          }
         }
       }
     } catch {
@@ -288,6 +433,8 @@ export class SpringBootParser {
       if (Object.keys(mapFields).length > 0) {
         api.mapFields = mapFields;
       }
+
+      this.applyResponseDataType(api, methodContent);
     }
 
     api.responseFields = extractResponseFieldNamesFromApi(api, dtoSchemas);

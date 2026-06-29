@@ -11,6 +11,8 @@ export interface ApiInfo {
   parameters?: ApiParameter[];
   requestBodyType?: string;
   returnType?: string;
+  /** Response.data 的真实类型（从签名泛型或 builder().data(xxx) 推断） */
+  responseDataType?: string;
   mapFields?: Record<string, any>;
   baseType?: string;
   summary?: string;

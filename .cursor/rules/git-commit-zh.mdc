@@ -1,0 +1,29 @@
+---
+description: Git 提交说明必须使用中文
+alwaysApply: true
+---
+
+# Git 提交说明（中文）
+
+在本仓库创建 git commit 时，**提交说明必须使用中文**。
+
+## 要求
+
+1. **标题行**：使用中文，可保留 conventional commits 前缀（如 `fix:`、`feat:`、`chore:`），冒号后的摘要用中文。
+2. **正文**（如有）：条目说明使用中文，写清「为什么改」，避免乱码。
+3. **提交前**：确认 `git log -1` 显示的中文无乱码；不要提交 `.env`、凭据等敏感文件。
+4. **推送**：仅在用户明确要求时执行 `git push`。
+
+## 示例
+
+```
+fix: 修复 Response 响应 schema 生成并推断 builder.data 类型
+
+- Response 接口按 DTO 使用 code/msg/data，不再硬编码 message 双层结构
+- 从 Response.builder().data(xxx) 推断 responseDataType
+```
+
+## 禁止
+
+- 不要使用纯英文提交说明（除非用户本次明确要求英文）
+- 不要使用无意义或乱码的 commit message
