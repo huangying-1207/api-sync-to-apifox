@@ -11,7 +11,11 @@ export interface ApiInfo {
   parameters?: ApiParameter[];
   requestBodyType?: string;
   returnType?: string;
-  /** Response.data 的真实类型（从签名泛型或 builder().data(xxx) 推断） */
+  /** 统一响应包装类简单名，如 Response、Result */
+  responseWrapperType?: string;
+  /** 包装类中承载业务数据的字段名（从 builder/泛型字段推断） */
+  responsePayloadField?: string;
+  /** 包装类载荷字段的真实业务类型 */
   responseDataType?: string;
   mapFields?: Record<string, any>;
   baseType?: string;

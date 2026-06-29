@@ -7,7 +7,7 @@ import {
 } from '../utils/helper';
 import { ApiInfo, OpenApiDocument } from '../types';
 import { appLog } from '../utils/logger';
-import { isResponseReturnType } from '../utils/java/responseType';
+import { extractBaseTypeName, findGenericPayloadFieldName, isWrapperReturnType } from '../utils/java/responseType';
 
 export interface FormatOpenApiResult {
   doc: any;
@@ -266,23 +266,39 @@ class ApiFormatter {
     };
   }
 
-  private buildResponseEnvelopeProperties(dataSchema: any): Record<string, unknown> {
-    const responseFields = this.dtoSchemas.Response;
+  private buildWrapperEnvelopeProperties(wrapperType: string, api: ApiInfo): Record<string, unknown> {
+    const wrapperFields = this.dtoSchemas[wrapperType] as Record<string, string> | undefined;
+    if (!wrapperFields || Object.keys(wrapperFields).length === 0) {
+      if (api.responseDataType && api.responsePayloadField) {
+        return { [api.responsePayloadField]: this.generateDataSchema(api.responseDataType, api) };
+      }
+      return {};
+    }
+
     const properties: Record<string, unknown> = {};
+    const payloadField = api.responsePayloadField || findGenericPayloadFieldName(wrapperFields);
 
-    if (responseFields?.code) {
-      properties.code = { ...this.javaTypeToOpenApi(responseFields.code), description: '响应码' };
-    } else {
-      properties.code = { type: 'string', description: '响应码' };
+    for (const fieldName of Object.keys(wrapperFields)) {
+      const fieldType = wrapperFields[fieldName];
+
+      if (payloadField && fieldName === payloadField && api.responseDataType) {
+        properties[fieldName] = this.generateDataSchema(api.responseDataType, api);
+        continue;
+      }
+
+      if (fieldType === 'T') {
+        properties[fieldName] = api.responseDataType
+          ? this.generateDataSchema(api.responseDataType, api)
+          : { type: 'object', description: getDefaultPropDescription(fieldName) };
+        continue;
+      }
+
+      properties[fieldName] = {
+        ...this.javaTypeToOpenApi(fieldType),
+        description: getDefaultPropDescription(fieldName),
+      };
     }
 
-    if (responseFields?.msg) {
-      properties.msg = { ...this.javaTypeToOpenApi(responseFields.msg), description: '响应消息' };
-    } else {
-      properties.msg = { type: 'string', description: '响应消息' };
-    }
-
-    properties.data = dataSchema;
     return properties;
   }
 
@@ -350,12 +366,11 @@ class ApiFormatter {
   }
 
   generateResponseSchema(returnType: string, api: ApiInfo): any {
-    if (isResponseReturnType(returnType)) {
+    const wrapperType = api.responseWrapperType || extractBaseTypeName(returnType);
+    if (api.responseWrapperType || isWrapperReturnType(returnType, this.dtoSchemas)) {
       return {
         type: 'object',
-        properties: this.buildResponseEnvelopeProperties(
-          this.generateDataSchema(api.responseDataType, api),
-        ),
+        properties: this.buildWrapperEnvelopeProperties(wrapperType, api),
       };
     }
 

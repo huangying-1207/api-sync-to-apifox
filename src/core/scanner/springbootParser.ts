@@ -3,7 +3,15 @@ import path from 'path';
 import { sync as globSync } from 'glob';
 import { ApiInfo } from '../../types';
 import { extractResponseFieldNamesFromApi } from '../../utils/openapi/openapiWalk';
-import { extractResponseGenericType, isResponseReturnType } from '../../utils/java/responseType';
+import {
+  DtoSchemaMap,
+  extractBaseTypeName,
+  extractBuilderPayloadInfo,
+  extractStaticFactoryPayload,
+  extractWrapperGenericType,
+  findGenericPayloadFieldName,
+  isWrapperReturnType,
+} from '../../utils/java/responseType';
 import { isTestOrNonApiSourceFile } from './frameworks';
 
 /** Spring Boot Controller / DTO 解析逻辑 */
@@ -178,34 +186,75 @@ export class SpringBootParser {
     return (filtered.length > 0 ? filtered : candidates)[0];
   }
 
-  extractResponseDataExpression(methodContent: string): string | undefined {
-    const clean = methodContent.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  extractBuilderPayloadField(methodContent: string, wrapperType: string): { fieldName: string; expr: string } | undefined {
+    return extractBuilderPayloadInfo(methodContent, wrapperType);
+  }
 
-    const sucMatch = clean.match(/Response\.suc\s*\(\s*([\s\S]+?)\s*\)/);
-    if (sucMatch) return sucMatch[1].trim();
+  extractResponseDataExpression(methodContent: string, wrapperType: string = 'Response'): string | undefined {
+    const payload = extractBuilderPayloadInfo(methodContent, wrapperType);
+    if (payload) return payload.expr;
 
-    const builderIndex = clean.search(/Response\.builder\s*\(\s*\)/);
-    if (builderIndex === -1) return undefined;
+    const staticPayload = extractStaticFactoryPayload(methodContent, wrapperType);
+    return staticPayload?.expr;
+  }
 
-    const afterBuilder = clean.slice(builderIndex);
-    const buildMatch = afterBuilder.match(/\.build\s*\(\s*\)/);
-    if (!buildMatch || buildMatch.index === undefined) return undefined;
+  inferResponseDataType(methodContent: string, wrapperType: string = 'Response'): string | undefined {
+    const dataExpr = this.extractResponseDataExpression(methodContent, wrapperType);
+    if (!dataExpr) return undefined;
+    return this.resolveExpressionType(dataExpr, methodContent);
+  }
 
-    const chain = afterBuilder.slice(0, buildMatch.index);
-    const dataIndex = chain.indexOf('.data(');
-    if (dataIndex === -1) return undefined;
+  applyWrapperResponseInfo(api: ApiInfo, methodContent: string, dtoSchemas: DtoSchemaMap): void {
+    if (!api.returnType) return;
 
-    const argStart = dataIndex + '.data('.length;
-    let depth = 1;
-    let i = argStart;
-    while (i < chain.length && depth > 0) {
-      const ch = chain[i];
-      if (ch === '(') depth++;
-      else if (ch === ')') depth--;
-      i++;
+    const wrapperType = extractBaseTypeName(api.returnType);
+    if (!isWrapperReturnType(api.returnType, dtoSchemas, methodContent)) return;
+
+    api.responseWrapperType = wrapperType;
+
+    const builderPayload = extractBuilderPayloadInfo(methodContent, wrapperType);
+    if (builderPayload) {
+      api.responsePayloadField = builderPayload.fieldName;
+      const inferred = this.resolveExpressionType(builderPayload.expr, methodContent);
+      if (inferred) api.responseDataType = inferred;
     }
-    if (depth !== 0) return undefined;
-    return chain.slice(argStart, i - 1).trim();
+
+    const staticPayload = extractStaticFactoryPayload(methodContent, wrapperType);
+    if (staticPayload) {
+      if (!api.responsePayloadField) {
+        api.responsePayloadField = findGenericPayloadFieldName(dtoSchemas[wrapperType] || {});
+      }
+      const inferred = this.resolveExpressionType(staticPayload.expr, methodContent);
+      if (inferred) api.responseDataType = inferred;
+    }
+
+    const genericType = extractWrapperGenericType(api.returnType);
+    if (genericType) {
+      api.responseDataType = genericType;
+    }
+
+    if (!api.responsePayloadField) {
+      api.responsePayloadField = findGenericPayloadFieldName(dtoSchemas[wrapperType] || {});
+    }
+
+    const dataType = api.responseDataType;
+    if (!dataType) return;
+
+    const mapMatch = dataType.match(/^Map<[^,]+,\s*(.+)>$/);
+    if (mapMatch) {
+      api.baseType = mapMatch[1].trim();
+      return;
+    }
+
+    const listMatch = dataType.match(/^(?:List|Set|Collection)<(.+)>$/);
+    if (listMatch) {
+      api.baseType = listMatch[1].trim();
+      return;
+    }
+
+    if (dataType !== 'JSONObject') {
+      api.baseType = dataType;
+    }
   }
 
   resolveExpressionType(expr: string, methodContent: string): string | undefined {
@@ -232,43 +281,8 @@ export class SpringBootParser {
     return undefined;
   }
 
-  inferResponseDataType(methodContent: string): string | undefined {
-    const dataExpr = this.extractResponseDataExpression(methodContent);
-    if (!dataExpr) return undefined;
-    return this.resolveExpressionType(dataExpr, methodContent);
-  }
-
-  applyResponseDataType(api: ApiInfo, methodContent: string): void {
-    if (!api.returnType || !isResponseReturnType(api.returnType)) return;
-
-    const genericType = extractResponseGenericType(api.returnType);
-    if (genericType) {
-      api.responseDataType = genericType;
-    }
-
-    const inferred = this.inferResponseDataType(methodContent);
-    if (inferred) {
-      api.responseDataType = inferred;
-    }
-
-    const dataType = api.responseDataType;
-    if (!dataType) return;
-
-    const mapMatch = dataType.match(/^Map<[^,]+,\s*(.+)>$/);
-    if (mapMatch) {
-      api.baseType = mapMatch[1].trim();
-      return;
-    }
-
-    const listMatch = dataType.match(/^(?:List|Set|Collection)<(.+)>$/);
-    if (listMatch) {
-      api.baseType = listMatch[1].trim();
-      return;
-    }
-
-    if (dataType !== 'JSONObject') {
-      api.baseType = dataType;
-    }
+  applyResponseDataType(api: ApiInfo, methodContent: string, dtoSchemas: DtoSchemaMap): void {
+    this.applyWrapperResponseInfo(api, methodContent, dtoSchemas);
   }
 
   extractMapFields(methodContent: string): Record<string, { type: string; format?: string }> {
@@ -434,7 +448,7 @@ export class SpringBootParser {
         api.mapFields = mapFields;
       }
 
-      this.applyResponseDataType(api, methodContent);
+      this.applyWrapperResponseInfo(api, methodContent, dtoSchemas);
     }
 
     api.responseFields = extractResponseFieldNamesFromApi(api, dtoSchemas);
