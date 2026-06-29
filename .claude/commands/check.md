@@ -2,8 +2,9 @@
 
 步骤：
 1. 执行 `npm run build` 确保编译通过
-2. 读取 `.apifoxsync.json` 和 `.apifox-credentials.json`
-3. 执行 `node dist/index.js scan --scan-type all` 或结合已生成的 `apifox-sync-plan.json`
-4. 对比扫描结果与 Apifox 现有接口，汇总差异
+2. 读取 `.apifoxsync.json` 和 `.apifox-credentials.json`，确认凭据与 source-path 有效
+3. 执行 `node dist/index.js scan --source-type code --source-path <配置值> --framework <配置值> --scan-type all`
+   - 若已配置 Apifox 凭据，scan 会自动与 Apifox 对比并输出新增/更新/删除统计
+4. 读取 `temp/apifox-sync-plan.json`（若存在）汇总差异
 
-仅汇报差异，不执行 sync。
+仅汇报差异，不执行 sync，不将计划标记为 confirmed。

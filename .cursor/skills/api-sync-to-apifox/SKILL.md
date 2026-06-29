@@ -39,7 +39,7 @@ node dist/index.js branches --json
 
 ## Step 2: LLM 分析
 
-读取 `apifox-sync-plan.json`，分析 `gitDiff` 和变更文件，更新：
+读取 `temp/apifox-sync-plan.json`，分析 `gitDiff` 和变更文件，更新：
 
 ```json
 {
@@ -52,6 +52,8 @@ node dist/index.js branches --json
 }
 ```
 
+分析报告格式见 [impact-analysis-template.md](impact-analysis-template.md)。
+
 ## Step 3: 用户确认
 
 1. **查询分支**（展示给用户前执行）：
@@ -61,7 +63,7 @@ node dist/index.js branches --json
 ```
 
 2. 向用户展示分支**名称**列表（不要展示 ID），询问同步到哪个分支，默认主分支。
-3. 展示 `apifox-sync-plan.md`，**必须等用户明确回复「确认同步到 <分支名>」**。
+3. 展示 `temp/apifox-sync-plan.md`，**必须等用户明确回复「确认同步到 <分支名>」**。
 
 ## Step 4: sync
 
@@ -72,7 +74,8 @@ node dist/index.js branches --json
   "status": "confirmed",
   "userConfirmed": true,
   "confirmedAt": "<ISO时间>",
-  "targetBranch": { "id": 1234568, "name": "dev", "isMain": false }
+  "targetBranch": { "id": 1234568, "name": "dev", "isMain": false },
+  "syncApis": [{ "method": "POST", "path": "/api/..." }]
 }
 ```
 
@@ -95,7 +98,43 @@ node dist/index.js sync --sync-mode incremental
 - 不要在用户确认前执行 sync
 - 不要依赖静态依赖图分析影响（已移除）
 
-## 附加资源
+## 附录：速查
 
-- [impact-analysis-template.md](impact-analysis-template.md)
-- [reference.md](reference.md)
+### 数据流
+
+```
+Git diff → changedFiles → scanCandidates → apifox-sync-plan.json
+         → LLM 填写 syncApis → 用户确认 → sync → Apifox
+```
+
+### 同步计划完整结构
+
+```json
+{
+  "version": 1,
+  "status": "pending",
+  "changedFiles": [],
+  "gitDiff": "...",
+  "scanCandidates": [{ "method": "GET", "path": "/api/foo", "controllerClass": "FooController" }],
+  "analysis": { "summary": "", "affectedApis": [], "excludedApis": [] },
+  "syncApis": [],
+  "userConfirmed": false
+}
+```
+
+### 常用命令
+
+```bash
+node dist/index.js workflow --project-name <项目名>   # scan + branches 一键
+node dist/index.js branches --json                    # 查询分支（确认前）
+node dist/index.js scan --scan-type changed
+node dist/index.js sync --sync-mode incremental       # 需已确认的计划
+node dist/index.js sync --sync-mode full              # 全量，无需计划
+node dist/index.js sync --apifox-branch-name dev      # 按分支名同步
+```
+
+### 其他文档
+
+- 人类用户手册：`README.md`
+- CLI 参数详情：`help.txt`（`node dist/index.js help`）
+- 改工具源码：`CLAUDE.md`

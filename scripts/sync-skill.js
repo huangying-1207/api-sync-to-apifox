@@ -158,6 +158,44 @@ function normalizeDisplayPath(p) {
   return p.replace(/\//g, '\\');
 }
 
+function generateSkillAppendix(target) {
+  const toolDist = normalizeDisplayPath(TOOL_DIST);
+  const projectRoot = normalizeDisplayPath(path.resolve(target.projectRoot));
+  const toolRoot = normalizeDisplayPath(TOOL_ROOT);
+
+  return `## 附录：速查
+
+### 数据流
+
+\`\`\`
+Git diff → changedFiles → scanCandidates → apifox-sync-plan.json
+         → LLM 填写 syncApis → 用户确认 → sync → Apifox
+\`\`\`
+
+### 常用命令（在 ${target.name} 根目录）
+
+\`\`\`powershell
+cd ${projectRoot}
+node ${toolDist} workflow
+node ${toolDist} branches --json
+node ${toolDist} sync --sync-mode incremental   # 需已确认计划
+node ${toolDist} sync --sync-mode full
+\`\`\`
+
+### 更新 Skill
+
+\`\`\`powershell
+cd ${toolRoot}
+npm run build
+npm run sync-skill -- --path "${projectRoot}"
+\`\`\`
+
+### 其他文档
+
+- 工具用户手册：\`${toolRoot}\\README.md\`
+- CLI 参数：\`${toolRoot}\\help.txt\``;
+}
+
 function generateProjectSkill(target) {
   const projectRoot = path.resolve(target.projectRoot);
   const projectName = target.name;
@@ -190,86 +228,53 @@ description: >-
 ## 工作流
 
 \`\`\`
-- [ ] Step 1: scan → 生成变更文档草稿
+- [ ] Step 1: workflow / scan → 生成变更文档草稿
 - [ ] Step 2: LLM 分析 git diff → 填写 syncApis
-- [ ] Step 3: 展示 apifox-sync-plan.md → 等用户明确确认
-- [ ] Step 4: 更新计划为 confirmed → sync
+- [ ] Step 3: 展示文档 → 询问 Apifox 目标分支 → 等用户明确确认
+- [ ] Step 4: 更新计划为 confirmed（含 targetBranch）→ sync
 \`\`\`
 
-### Step 1: scan
+### Step 1: workflow（推荐）
 
 \`\`\`powershell
 cd ${projectRootDisplay}
-node ${toolDist} scan
+node ${toolDist} workflow
 \`\`\`
 
-产出：\`temp/apifox-sync-plan.json\`、\`temp/apifox-sync-plan.md\`
+产出：\`temp/apifox-sync-plan.json\`、\`temp/apifox-sync-plan.md\`、\`temp/apifox-workflow-summary.json\`
 
 ### Step 2: LLM 分析
 
-读取 \`apifox-sync-plan.json\` 的 \`gitDiff\`，分析对 Controller 的影响，更新 \`analysis\` 和 \`syncApis\`。
+读取 \`temp/apifox-sync-plan.json\` 的 \`gitDiff\`，分析对 Controller 的直接影响及 DTO/Service 间接影响，更新 \`analysis\` 和 \`syncApis\`。
+
+分析报告格式见 [impact-analysis-template.md](impact-analysis-template.md)。
 
 ### Step 3: 用户确认
 
-展示 \`temp/apifox-sync-plan.md\`，**必须等用户明确回复「确认同步」**。
+1. \`node ${toolDist} branches --json\` 查询分支
+2. 向用户展示分支**名称**（不展示 ID），默认主分支
+3. 展示 \`temp/apifox-sync-plan.md\`，**必须等用户明确回复「确认同步到 <分支名>」**
 
 ### Step 4: sync
 
-用户确认后更新计划 \`userConfirmed: true\`、\`status: confirmed\`，再执行：
+用户确认后更新计划（含 \`targetBranch\`、\`userConfirmed: true\`、\`status: confirmed\`），再执行：
 
 \`\`\`powershell
 node ${toolDist} sync --sync-mode incremental
 \`\`\`
 
+未确认时 sync 拒绝执行。
+
+## 禁止
+
+- 不要在用户确认前执行 sync
+- 不要依赖静态依赖图分析影响（已移除）
+
 ## Cursor 触发语
 
 > 分析当前代码变更对接口的影响，生成变更文档，我确认后再同步 Apifox
 
-## 附加资源
-
-- [impact-analysis-template.md](impact-analysis-template.md)
-- [reference.md](reference.md)
-`;
-}
-
-function generateProjectReference(target) {
-  const projectRoot = normalizeDisplayPath(path.resolve(target.projectRoot));
-  const toolDist = normalizeDisplayPath(TOOL_DIST);
-
-  return `# API Sync to Apifox — ${target.name} 参考
-
-工具目录：\`${normalizeDisplayPath(TOOL_ROOT)}\`  
-项目目录：\`${projectRoot}\`
-
-## 架构
-
-\`\`\`
-Git diff → changedFiles → scanCandidates → apifox-sync-plan.json
-         → LLM 填写 syncApis → 用户确认 → sync → Apifox
-\`\`\`
-
-## 常用命令（在 ${target.name} 根目录）
-
-\`\`\`powershell
-$TOOL = "${toolDist}"
-
-node $TOOL scan
-node $TOOL sync --sync-mode incremental   # 需已确认计划
-node $TOOL sync --sync-mode full
-node $TOOL sync --apis "GET:/api/foo,POST:/api/bar"
-\`\`\`
-
-## 更新 Skill
-
-在 api-sync-to-apifox 项目执行：
-
-\`\`\`powershell
-cd ${normalizeDisplayPath(TOOL_ROOT)}
-npm run build
-npm run sync-skill -- --path "${projectRoot}"
-\`\`\`
-
-或写入 scripts/skill-targets.json 后执行 npm run sync-skill
+${generateSkillAppendix(target)}
 `;
 }
 
@@ -293,12 +298,15 @@ function syncToTarget(target) {
   }
 
   fs.writeFileSync(path.join(destDir, 'SKILL.md'), generateProjectSkill(target), 'utf8');
-  fs.writeFileSync(path.join(destDir, 'reference.md'), generateProjectReference(target), 'utf8');
+
+  const staleReference = path.join(destDir, 'reference.md');
+  if (fs.existsSync(staleReference)) {
+    fs.unlinkSync(staleReference);
+  }
 
   console.log(`✅ 已同步 Skill → ${destDir}`);
   console.log(`   项目: ${target.name}`);
   console.log(`   - SKILL.md`);
-  console.log(`   - reference.md`);
   if (fs.existsSync(templateSrc)) {
     console.log(`   - impact-analysis-template.md`);
   }
