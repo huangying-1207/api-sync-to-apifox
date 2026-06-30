@@ -14,27 +14,144 @@ import {
 } from '../../utils/java/responseType';
 import { isTestOrNonApiSourceFile } from './frameworks';
 
+const REQUEST_METHOD_TO_HTTP: Record<string, string> = {
+  GET: 'get',
+  POST: 'post',
+  PUT: 'put',
+  DELETE: 'delete',
+  PATCH: 'patch',
+};
+
+const DEFAULT_REQUEST_MAPPING_METHODS = ['get', 'post', 'put', 'delete', 'patch'];
+
+export interface RequestMappingEndpoint {
+  method: string;
+  args: string;
+  index: number;
+  path: string;
+}
+
+function normalizeMappingPath(path: string): string {
+  let normalized = path.trim();
+  if (normalized && !normalized.startsWith('/')) normalized = `/${normalized}`;
+  if (normalized.endsWith('/') && normalized.length > 1) normalized = normalized.slice(0, -1);
+  return normalized;
+}
+
+/** 从 Mapping 注解参数中解析全部路径（支持 value/path 与多路径数组） */
+export function extractPathsFromAnnotation(raw: string): string[] {
+  const trimmed = raw.trim();
+  const namedMatch = trimmed.match(/(?:value|path)\s*=\s*(\{[^}]*\}|["'][^"']*["'])/);
+  if (namedMatch) {
+    const pathRaw = namedMatch[1].trim();
+    if (pathRaw.startsWith('{')) {
+      const paths = [...pathRaw.matchAll(/["']([^"']+)["']/g)].map((match) => normalizeMappingPath(match[1]));
+      return paths.length > 0 ? paths : [''];
+    }
+    return [normalizeMappingPath(pathRaw.replace(/^["']|["']$/g, ''))];
+  }
+
+  const arrayMatch = trimmed.match(/^\{(.+)\}$/s);
+  if (arrayMatch) {
+    const paths = [...arrayMatch[1].matchAll(/["']([^"']+)["']/g)].map((match) => normalizeMappingPath(match[1]));
+    return paths.length > 0 ? paths : [''];
+  }
+
+  const singleMatch = trimmed.match(/^["']([^"']+)["']$/);
+  if (singleMatch) return [normalizeMappingPath(singleMatch[1])];
+
+  if (trimmed && !trimmed.includes('=')) {
+    return [normalizeMappingPath(trimmed)];
+  }
+
+  return [''];
+}
+
+/** 从 @RequestMapping(...) 参数中解析 method（RequestMethod / HttpMethod，含数组） */
+export function extractHttpMethodsFromRequestMappingArgs(args: string): string[] {
+  const methodAttr = args.match(/method\s*=\s*(\{[^}]+\}|[^,)\s]+)/);
+  if (!methodAttr) return [];
+
+  const raw = methodAttr[1].trim();
+  const tokens: string[] = raw.startsWith('{')
+    ? raw
+        .slice(1, -1)
+        .split(',')
+        .map((part) => part.trim())
+        .filter(Boolean)
+    : [raw];
+
+  const methods: string[] = [];
+  for (const token of tokens) {
+    const name = token.replace(/^(?:RequestMethod|HttpMethod)\./, '').trim().toUpperCase();
+    const httpMethod = REQUEST_METHOD_TO_HTTP[name];
+    if (httpMethod && !methods.includes(httpMethod)) {
+      methods.push(httpMethod);
+    }
+  }
+  return methods;
+}
+
+/** 判断 @RequestMapping 是否位于类声明前（类级前缀，非接口） */
+export function isClassLevelRequestMapping(content: string, matchIndex: number): boolean {
+  const window = content.slice(matchIndex, Math.min(content.length, matchIndex + 600));
+  const classMatch = window.match(/public\s+(?:abstract\s+)?class\s+\w+/);
+  if (!classMatch || classMatch.index === undefined) return false;
+
+  const beforeClass = window.slice(0, classMatch.index);
+  const methodBeforeClass = beforeClass.match(/public\s+(?!class\b)[^;{]+?\s+\w+\s*\(/);
+  return !methodBeforeClass;
+}
+
+function appendRequestMappingEndpoints(
+  endpoints: RequestMappingEndpoint[],
+  args: string,
+  index: number,
+  methods: string[],
+): void {
+  const paths = extractPathsFromAnnotation(args);
+  const effectivePaths = paths.some((path) => path !== '') ? paths.filter((path) => path !== '') : [''];
+
+  for (const method of methods) {
+    for (const path of effectivePaths) {
+      endpoints.push({ method, args, index, path });
+    }
+  }
+}
+
+/** 扫描方法级 @RequestMapping（含无 method 时默认五类 HTTP 方法） */
+export function findRequestMappingMethodEndpoints(content: string): RequestMappingEndpoint[] {
+  const endpoints: RequestMappingEndpoint[] = [];
+
+  for (const match of content.matchAll(/@RequestMapping\s*\(\s*(\{[^}]*\}|[^)]+)\)/g)) {
+    const args = match[1];
+    const index = match.index!;
+    const explicitMethods = extractHttpMethodsFromRequestMappingArgs(args);
+
+    if (explicitMethods.length > 0) {
+      appendRequestMappingEndpoints(endpoints, args, index, explicitMethods);
+      continue;
+    }
+
+    if (isClassLevelRequestMapping(content, index)) {
+      continue;
+    }
+
+    const paths = extractPathsFromAnnotation(args).filter((path) => path !== '');
+    if (paths.length === 0) continue;
+
+    appendRequestMappingEndpoints(endpoints, args, index, DEFAULT_REQUEST_MAPPING_METHODS);
+  }
+
+  return endpoints;
+}
+
 /** Spring Boot Controller / DTO 解析逻辑 */
 export class SpringBootParser {
   private methodReturnTypes: Record<string, string[]> = {};
   extractPathFromAnnotation(raw: string): string {
-    raw = raw.trim();
-
-    const namedMatch = raw.match(/(?:value|path)\s*=\s*(\{[^}]*\}|["'][^"']*["'])/);
-    if (namedMatch) {
-      raw = namedMatch[1].trim();
-    }
-
-    const arrayMatch = raw.match(/^\{(.+)\}$/s);
-    if (arrayMatch) {
-      const inner = arrayMatch[1];
-      const firstPath = inner.match(/["']([^"']+)["']/);
-      return firstPath ? firstPath[1] : '';
-    }
-
-    const singleMatch = raw.match(/^["']([^"']+)["']$/);
-    if (singleMatch) return singleMatch[1];
-    return raw;
+    const paths = extractPathsFromAnnotation(raw);
+    return paths[0] ?? '';
   }
 
   findMethodEnd(content: string, startIndex: number): number {

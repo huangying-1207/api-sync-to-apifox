@@ -9,6 +9,7 @@ export const FRAMEWORK_CONFIGS: Record<string, FrameworkConfig> = {
       post: /@PostMapping\s*\(\s*(\{[^}]*\}|[^)]*)\)/g,
       put: /@PutMapping\s*\(\s*(\{[^}]*\}|[^)]*)\)/g,
       delete: /@DeleteMapping\s*\(\s*(\{[^}]*\}|[^)]*)\)/g,
+      patch: /@PatchMapping\s*\(\s*(\{[^}]*\}|[^)]*)\)/g,
     },
     classPathPattern: /@RequestMapping\s*\(\s*["']?([^"']*)["']?\s*\)/,
     fileExts: ['.java'],

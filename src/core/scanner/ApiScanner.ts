@@ -10,7 +10,7 @@ import { ErrorHandler } from '../../utils/errorHandler';
 import { findGitRoot, getGitChangedFiles } from '../../utils/git';
 import { appLog, appWarn } from '../../utils/logger';
 import { FRAMEWORK_CONFIGS, isTestOrNonApiSourceFile } from './frameworks';
-import { springBootParser } from './springbootParser';
+import { springBootParser, findRequestMappingMethodEndpoints, extractPathsFromAnnotation } from './springbootParser';
 import { extractControllerFolderMeta } from '../../utils/java/controllerFolder';
 
 export { isTestOrNonApiSourceFile } from './frameworks';
@@ -96,11 +96,30 @@ export class ApiScanner {
 
       for (const method of Object.keys(config.methodPatterns)) {
         for (const match of content.matchAll(config.methodPatterns[method])) {
+          if (framework === 'springboot') {
+            const paths = extractPathsFromAnnotation(match[1]);
+            for (const apiPath of paths) {
+              this.pushSpringBootApi(apis, {
+                content,
+                matchIndex: match.index!,
+                method,
+                apiPath,
+                classPathPrefix,
+                fileName,
+                controllerKey,
+                controllerFolderMeta,
+                file,
+                dtoSchemas: this.dtoSchemas,
+              });
+            }
+            continue;
+          }
+
           let apiPath = springBootParser.extractPathFromAnnotation(match[1]);
           if (apiPath && !apiPath.startsWith('/')) apiPath = '/' + apiPath;
           if (apiPath && apiPath.endsWith('/') && apiPath.length > 1) apiPath = apiPath.slice(0, -1);
 
-          const api: ApiInfo = {
+          apis.push({
             path: (classPathPrefix + apiPath).replace(/\/+/g, '/'),
             method,
             controller: fileName,
@@ -109,13 +128,24 @@ export class ApiScanner {
             controllerTag: controllerFolderMeta.controllerTag,
             file,
             parameters: [],
-          };
+          });
+        }
+      }
 
-          if (framework === 'springboot') {
-            springBootParser.parseApiDetails(content, api, match.index!, this.dtoSchemas);
-          }
-
-          apis.push(api);
+      if (framework === 'springboot') {
+        for (const endpoint of findRequestMappingMethodEndpoints(content)) {
+          this.pushSpringBootApi(apis, {
+            content,
+            matchIndex: endpoint.index,
+            method: endpoint.method,
+            apiPath: endpoint.path,
+            classPathPrefix,
+            fileName,
+            controllerKey,
+            controllerFolderMeta,
+            file,
+            dtoSchemas: this.dtoSchemas,
+          });
         }
       }
     }
@@ -149,6 +179,38 @@ export class ApiScanner {
       (file) => /Controller\.java$/i.test(file) || /Controller\.(js|ts)$/i.test(file),
     );
     this.setChangedFiles(controllerFiles.length > 0 ? controllerFiles : changedFiles);
+  }
+
+  private pushSpringBootApi(
+    apis: ApiInfo[],
+    options: {
+      content: string;
+      matchIndex: number;
+      method: string;
+      apiPath: string;
+      classPathPrefix: string;
+      fileName: string;
+      controllerKey: string;
+      controllerFolderMeta: ReturnType<typeof extractControllerFolderMeta>;
+      file: string;
+      dtoSchemas: Record<string, any>;
+    },
+  ): void {
+    const apiPath = options.apiPath;
+
+    const api: ApiInfo = {
+      path: (options.classPathPrefix + apiPath).replace(/\/+/g, '/'),
+      method: options.method,
+      controller: options.fileName,
+      controllerKey: options.controllerKey,
+      controllerClassName: options.controllerFolderMeta.controllerClassName,
+      controllerTag: options.controllerFolderMeta.controllerTag,
+      file: options.file,
+      parameters: [],
+    };
+
+    springBootParser.parseApiDetails(options.content, api, options.matchIndex, options.dtoSchemas);
+    apis.push(api);
   }
 }
 
