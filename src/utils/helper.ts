@@ -2,6 +2,8 @@
  * 通用辅助函数
  */
 
+import path from 'path';
+
 // 检查字符串是否包含中文字符
 export function containsChinese(str: string): boolean {
   return /[一-鿿]/.test(str);
@@ -58,9 +60,20 @@ export function getDefaultResponseDescription(statusCode: string): string {
   return statusMap[statusCode] || '响应';
 }
 
-// 规范化路径
-export function normalizePath(path: string): string {
-  return path.replace(/\/$/, '');
+// 规范化 API 路径（去尾斜杠）
+export function normalizePath(apiPath: string): string {
+  return apiPath.replace(/\/$/, '');
+}
+
+/** 规范化文件绝对路径，供 fs 读取 */
+export function normalizeFilePath(filePath: string): string {
+  return path.resolve(path.normalize(filePath));
+}
+
+/** 文件路径去重键（Windows 下忽略大小写） */
+export function filePathKey(filePath: string): string {
+  const resolved = normalizeFilePath(filePath);
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
 }
 
 // 网络请求重试函数

@@ -2,7 +2,8 @@ export type DtoFieldMap = Record<string, string>;
 export type DtoSchemaMap = Record<string, DtoFieldMap>;
 
 /** 去掉泛型参数，得到简单类名，如 Response<Map<...>> → Response */
-export function extractBaseTypeName(returnType: string): string {
+export function extractBaseTypeName(returnType: string | undefined): string {
+  if (!returnType?.trim()) return 'Object';
   const normalized = returnType.trim();
   const generic = normalized.match(/^(\w+)\s*<.+>$/);
   return generic ? generic[1] : normalized;

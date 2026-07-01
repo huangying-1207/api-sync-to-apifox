@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { sync as globSync } from 'glob';
 import { spawnSync } from 'child_process';
 
 /** 查找 Git 仓库根目录 */
@@ -24,6 +25,24 @@ export function runGit(args: string[], cwd: string): string {
   return `${result.stdout || ''}${result.stderr || ''}`.trim();
 }
 
+/** 将 git status 条目展开为具体文件（目录会递归展开） */
+function expandGitChangedPath(absolutePath: string, filter: (absolutePath: string) => boolean): string[] {
+  if (!fs.existsSync(absolutePath)) {
+    return [];
+  }
+
+  if (fs.statSync(absolutePath).isDirectory()) {
+    const pattern = `${absolutePath.replace(/\\/g, '/')}/**/*`;
+    try {
+      return globSync(pattern, { nodir: true }).map((file) => path.normalize(file)).filter(filter);
+    } catch {
+      return [];
+    }
+  }
+
+  return filter(absolutePath) ? [absolutePath] : [];
+}
+
 /** 获取 git status --porcelain 中的变更文件（绝对路径） */
 export function getGitChangedFiles(
   sourcePath: string,
@@ -33,18 +52,18 @@ export function getGitChangedFiles(
   const gitStatus = runGit(['status', '--porcelain'], projectRoot);
   if (!gitStatus) return [];
 
-  const modifiedFiles: string[] = [];
+  const modifiedFiles = new Set<string>();
   for (const line of gitStatus.split('\n').filter((l) => l.trim())) {
     const parts = line.trim().split(/\s+/);
     const relativePath = parts.slice(1).join(' ');
     const absolutePath = path.normalize(
       relativePath.startsWith('/') ? relativePath : path.join(projectRoot, relativePath),
     );
-    if (filter(absolutePath)) {
-      modifiedFiles.push(absolutePath);
+    for (const file of expandGitChangedPath(absolutePath, filter)) {
+      modifiedFiles.add(file);
     }
   }
-  return modifiedFiles;
+  return [...modifiedFiles];
 }
 
 /** 获取 git diff 文本 */

@@ -2,6 +2,10 @@
  * 项目类型定义
  */
 
+import type { LlmResponseFieldSupplement } from './llmPlanContext';
+
+export type { LlmResponseFieldSupplement } from './llmPlanContext';
+
 export interface ApiInfo {
   path: string;
   method: string;
@@ -21,6 +25,10 @@ export interface ApiInfo {
   parameters?: ApiParameter[];
   requestBodyType?: string;
   returnType?: string;
+  /** 无响应体（public void 等） */
+  noResponseBody?: boolean;
+  /** 成功响应 HTTP 状态码，如 200 / 202 / 204 */
+  responseStatusCode?: string;
   /** 统一响应包装类简单名，如 Response、Result */
   responseWrapperType?: string;
   /** 包装类中承载业务数据的字段名（从 builder/泛型字段推断） */
@@ -31,6 +39,7 @@ export interface ApiInfo {
   baseType?: string;
   summary?: string;
   responseFields?: string[];
+  needsLlmFieldSupplement?: boolean;
 }
 
 export interface ApiParameter {
@@ -77,12 +86,24 @@ export interface ApifoxBranch {
   type?: string;
 }
 
+/** 变更文件源码，供 LLM 分析 */
+export interface SourceFile {
+  file: string;
+  content: string;
+}
+
 export interface SyncPlan {
   version: 1;
   status: 'pending' | 'confirmed';
   generatedAt: string;
   changedFiles: string[];
   gitDiff?: string;
+  /** 变更的源文件（含 Controller/Service/DTO 等所有 .java 变更文件），LLM 判断影响面的主要材料 */
+  changedSourceFiles?: SourceFile[];
+  /** 全量 Controller 源文件，LLM 读接口定义与调用关系 */
+  controllerSourceFiles?: SourceFile[];
+  /** Apifox 现有接口的 OpenAPI JSON 快照，LLM 判断哪些接口需要更新 */
+  apifoxSnapshot?: any;
   analysis: {
     summary: string;
     affectedApis: SyncPlanApi[];
@@ -91,10 +112,9 @@ export interface SyncPlan {
   syncApis: Array<{ method: string; path: string }>;
   userConfirmed: boolean;
   confirmedAt?: string;
-  /** 同步目标 Apifox 分支，确认同步前由用户/Agent 指定 */
   targetBranch?: ApifoxBranch;
-  /** scan 阶段直接扫描到的 Controller 接口（LLM 分析前的候选） */
-  scanCandidates?: SyncPlanApi[];
+  /** LLM 填写：JSONObject 响应字段补充 */
+  fieldSupplements?: LlmResponseFieldSupplement[];
 }
 
 export interface Config {
@@ -111,13 +131,9 @@ export interface Config {
   'api-method'?: string;
   apis?: string;
   'sync-plan'?: string;
-  /** Apifox 迭代分支 ID，不填则同步到主分支 */
   'apifox-branch-id'?: number;
-  /** Apifox 分支名称 */
   'apifox-branch-name'?: string;
-  /** 可选分支列表，用于同步前选择；可在 Apifox「管理迭代分支」中查看 ID */
   'apifox-branches'?: ApifoxBranch[];
-  /** 本机 api-sync-to-apifox 入口（dist/index.js 绝对路径），每人路径不同，不提交 Git */
   'sync-tool-path'?: string;
 }
 
@@ -128,7 +144,6 @@ export interface CliArgs extends Partial<Config> {
   help?: boolean;
   'refresh-branches'?: boolean;
   'no-branch-prompt'?: boolean;
-  /** 同步时将 OpenAPI 文档写入 temp/formatted-api-doc.json */
   'save-doc'?: boolean;
 }
 

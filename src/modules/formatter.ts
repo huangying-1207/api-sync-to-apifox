@@ -9,6 +9,7 @@ import { ApiInfo, OpenApiDocument } from '../types';
 import { appLog } from '../utils/logger';
 import { buildOpenApiTagsForFolder } from '../utils/apifox/folderTags';
 import { extractBaseTypeName, findGenericPayloadFieldName, isWrapperReturnType } from '../utils/java/responseType';
+import { isNoResponseBodyApi } from '../utils/java/responseStatus';
 
 export interface FormatOpenApiResult {
   doc: any;
@@ -267,6 +268,29 @@ class ApiFormatter {
     };
   }
 
+  private buildOperationResponses(api: ApiInfo): Record<string, unknown> {
+    if (isNoResponseBodyApi(api)) {
+      const statusCode = api.responseStatusCode || '200';
+      return {
+        [statusCode]: {
+          description: getDefaultResponseDescription(statusCode),
+        },
+      };
+    }
+
+    const schema = this.generateResponseSchema(api.returnType, api);
+    return {
+      '200': {
+        description: getDefaultResponseDescription('200'),
+        content: {
+          'application/json': {
+            schema,
+          },
+        },
+      },
+    };
+  }
+
   private buildWrapperEnvelopeProperties(wrapperType: string, api: ApiInfo): Record<string, unknown> {
     const wrapperFields = this.dtoSchemas[wrapperType] as Record<string, string> | undefined;
     if (!wrapperFields || Object.keys(wrapperFields).length === 0) {
@@ -366,7 +390,18 @@ class ApiFormatter {
     return openApiType;
   }
 
-  generateResponseSchema(returnType: string, api: ApiInfo): any {
+  generateResponseSchema(returnType: string | undefined, api: ApiInfo): any {
+    if (isNoResponseBodyApi(api) || returnType === 'void') {
+      return undefined;
+    }
+
+    if (!returnType?.trim()) {
+      return {
+        type: 'object',
+        properties: this.buildLegacyWrapperProperties({ type: 'object', description: '响应数据' }),
+      };
+    }
+
     const wrapperType = api.responseWrapperType || extractBaseTypeName(returnType);
     if (api.responseWrapperType || isWrapperReturnType(returnType, this.dtoSchemas)) {
       return {
@@ -445,6 +480,27 @@ class ApiFormatter {
     if (this.dtoSchemas[baseObjectType]) {
       const fields = this.dtoSchemas[baseObjectType];
       Object.keys(fields).forEach((fieldName) => {
+        const fieldType = fields[fieldName];
+        const isJsonObjectField =
+          fieldType === 'JSONObject' || fieldType.includes('JSONObject') || fieldName === 'extInfo';
+
+        if (isJsonObjectField && api?.mapFields && Object.keys(api.mapFields).length > 0) {
+          const nestedProps: Record<string, unknown> = {};
+          Object.keys(api.mapFields).forEach((mapFieldName) => {
+            nestedProps[mapFieldName] = {
+              ...api.mapFields![mapFieldName],
+              description: getDefaultPropDescription(mapFieldName),
+            };
+          });
+          props[fieldName] = {
+            type: 'object',
+            description: getDefaultPropDescription(fieldName),
+            properties: nestedProps,
+            additionalProperties: true,
+          };
+          return;
+        }
+
         props[fieldName] = {
           ...this.javaTypeToOpenApi(fields[fieldName], nextVisited, depth + 1),
           description: getDefaultPropDescription(fieldName),
@@ -463,10 +519,15 @@ class ApiFormatter {
 
     if (Object.keys(props).length > 0) return props;
 
-    return {
-      id: { type: 'integer', description: getDefaultPropDescription('id') },
-      name: { type: 'string', description: getDefaultPropDescription('name') },
-    };
+    if (objectType === 'void') {
+      return {};
+    }
+
+    if (api?.needsLlmFieldSupplement || (objectType === 'JSONObject' && api?.returnType === 'JSONObject')) {
+      return {};
+    }
+
+    return {};
   }
 
   generateBodySchema(bodyType: string): any {
@@ -509,16 +570,7 @@ class ApiFormatter {
       const operation: any = {
         summary: `Auto-generated summary for ${api.method.toUpperCase()} ${api.path}`,
         description: `Auto-generated description for ${api.method.toUpperCase()} ${api.path}`,
-        responses: {
-          '200': {
-            description: 'Auto-generated success response',
-            content: {
-              'application/json': {
-                schema: this.generateResponseSchema(api.returnType!, api),
-              },
-            },
-          },
-        },
+        responses: this.buildOperationResponses(api),
       };
       const tags = buildOpenApiTagsForFolder(api.folderName);
       if (tags) {

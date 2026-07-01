@@ -9,13 +9,7 @@
   "scripts": {
     "build": "tsc",
     "watch": "tsc --watch",
-    "pretest": "npm run build",
-    "test": "mocha test/**/*.test.js --reporter spec",
-    "check": "npm run build && npm test",
-    "test:dev": "mocha test/**/*.test.js --reporter spec --watch-extensions ts,js --watch",
-    "test:helper": "mocha test/helper.test.js --reporter spec",
-    "test:error": "mocha test/errorHandler.test.js --reporter spec",
-    "test:scanner": "mocha test/scanner.test.js --reporter spec",
+    "check": "npm run build",
     "mcp": "node dist/mcp/mcp-server.js",
     "mcp:start": "node dist/mcp/mcp-server.js",
     "start": "node dist/index.js",
@@ -49,21 +43,13 @@
   "author": "Claude",
   "license": "MIT",
   "devDependencies": {
-    "@types/chai": "^5.2.3",
-    "@types/mocha": "^10.0.10",
     "@types/node": "^25.7.0",
-    "@types/sinon": "^21.0.1",
     "@typescript-eslint/eslint-plugin": "^8.59.3",
     "@typescript-eslint/parser": "^8.59.3",
-    "chai": "^6.2.2",
     "eslint": "^10.3.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.5",
-    "mocha": "^11.7.5",
     "prettier": "^3.8.3",
-    "sinon": "^22.0.0",
-    "ts-node": "^10.9.2",
-    "tsconfig-paths": "^4.2.0",
     "typescript": "^6.0.3"
   }
 }

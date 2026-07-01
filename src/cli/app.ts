@@ -1,6 +1,9 @@
+import fs from 'fs';
 import path from 'path';
+import { globSync } from 'glob';
 import { configManager } from '../config';
 import { SyncPipeline } from '../core/pipeline';
+import { isTestOrNonApiSourceFile } from '../core/scanner/frameworks';
 import {
   createEmptySyncPlan,
   getDefaultPlanPath,
@@ -20,7 +23,7 @@ import {
   parseBranchesConfig,
   resolveTargetBranch,
 } from '../utils/apifox/apifoxBranch';
-import { ApiInfo, ApifoxBranch, CliArgs, OpenApiDocument, SyncPlan } from '../types';
+import { ApiInfo, ApifoxBranch, CliArgs, OpenApiDocument, SourceFile, SyncPlan } from '../types';
 import { getGitDiff } from '../utils/git';
 import { appLog, appWarn, isJsonMode, setLogOptions } from '../utils/logger';
 
@@ -36,31 +39,26 @@ export class ApifoxSyncApp {
     setLogOptions({ quiet: args.quiet, json: args.json });
   }
 
-  private apiToSyncPlanApi(api: ApiInfo) {
-    return {
-      method: api.method.toUpperCase(),
-      path: api.path,
-      controllerClass: api.controller?.replace('.java', ''),
-      javaMethodName: api.javaMethodName,
-    };
+  /** 收集变更的 Java 源文件内容 */
+  private collectChangedSourceFiles(changedFiles: string[], baseDir: string): SourceFile[] {
+    return changedFiles
+      .filter((f) => f.endsWith('.java') && fs.existsSync(f))
+      .map((f) => ({
+        file: path.relative(baseDir, f).replace(/\\/g, '/'),
+        content: fs.readFileSync(f, 'utf8'),
+      }));
   }
 
-  private writeSyncPlanDraft(sourcePath: string, detectedApis: ApiInfo[], comparerSummary?: string): void {
-    if (isConfirmedSyncPlan(getDefaultPlanPath())) {
-      appLog('⚠️  检测到已确认的同步计划，本次 scan 将作废旧确认，需重新分析并确认');
-    }
-
-    const plan = createEmptySyncPlan(this.pipeline.scanner.getChangedFiles(), getGitDiff(sourcePath));
-    plan.scanCandidates = detectedApis.map((api) => this.apiToSyncPlanApi(api));
-    plan.analysis.summary =
-      comparerSummary ||
-      '待 LLM 分析：请根据 git diff 与变更文件，判断哪些 Controller 接口的入参/响应受影响，并填写 syncApis。';
-
-    const jsonPath = writeSyncPlan(plan);
-    appLog(`\n📋 变更文档已生成（status: pending，待确认）:`);
-    appLog(`  - ${jsonPath}`);
-    appLog(`  - ${path.join(process.cwd(), 'temp', 'apifox-sync-plan.md')}`);
-    appLog(`\n下一步：执行 workflow 或 branches --json，由 LLM 分析后用户确认再 sync。`);
+  /** 收集全量 Controller 源文件内容 */
+  private collectControllerSourceFiles(sourcePath: string, baseDir: string): SourceFile[] {
+    const pattern = `${sourcePath.replace(/\\/g, '/')}/**/*Controller.java`;
+    const files = globSync(pattern);
+    return files
+      .filter((f) => !isTestOrNonApiSourceFile(f))
+      .map((f) => ({
+        file: path.relative(baseDir, path.normalize(f)).replace(/\\/g, '/'),
+        content: fs.readFileSync(f, 'utf8'),
+      }));
   }
 
   private async resolveSyncTargetBranch(
@@ -121,14 +119,14 @@ export class ApifoxSyncApp {
 
   async scan(args: CliArgs): Promise<void> {
     this.applyLogOptions(args);
-    appLog('=== 开始接口变化扫描 ===');
+    appLog('=== 开始收集接口变更材料 ===');
 
     const sourceType = args['source-type'];
     const sourcePath = args['source-path']!;
-    const framework = args.framework!;
     const scanType = args['scan-type'];
     const projectId = args['apifox-project-id'];
     const apiKey = args['apifox-api-key'];
+    const baseDir = process.cwd();
 
     if (projectId && apiKey) {
       const ok = await this.pipeline.syncer.validateApifoxConnection(projectId, apiKey);
@@ -136,53 +134,68 @@ export class ApifoxSyncApp {
     }
 
     if (sourceType === 'code') {
-      if (scanType === 'changed') await this.pipeline.scanner.detectCodeChanges(sourcePath);
-
-      const detectedApis = await this.pipeline.scanCodeApis(sourcePath, framework);
-      let comparerSummary: string | undefined;
-
-      if (projectId && apiKey) {
-        const existingApis = await this.pipeline.syncer.getApifoxExistingApis(projectId, apiKey);
-        this.pipeline.comparer.compareApiChanges(detectedApis, existingApis, scanType === 'changed');
-
-        const unformattedCount = this.pipeline.countUnformattedFromApis(detectedApis);
-        if (unformattedCount > 0) {
-          appLog(`\n需要格式化的接口：${unformattedCount}个接口的字段说明需要格式化为中文`);
-        }
-
-        const { added, updated, removed } = this.pipeline.comparer.scanResults;
-        if (added.length + updated.length + removed.length > 0) {
-          comparerSummary = `与 Apifox 对比：新增 ${added.length}，更新 ${updated.length}，删除 ${removed.length}`;
-          appLog(`\n🚨 ${comparerSummary}`);
-        }
-      } else {
-        this.logDetectedApis(detectedApis, scanType);
+      if (isConfirmedSyncPlan(getDefaultPlanPath())) {
+        appLog('⚠️  检测到已确认的同步计划，本次 scan 将作废旧确认，需重新分析并确认');
       }
 
-      this.writeSyncPlanDraft(sourcePath, detectedApis, comparerSummary);
+      // 1. 检测 git 变更文件
+      if (scanType === 'changed') {
+        await this.pipeline.scanner.detectCodeChanges(sourcePath);
+      }
+      const changedFiles = this.pipeline.scanner.getChangedFiles();
+      appLog(`变更文件: ${changedFiles.length} 个`);
+
+      // 2. 读变更源文件（含 Controller/Service/DTO 等所有 .java 变更文件）
+      const changedSourceFiles = this.collectChangedSourceFiles(changedFiles, baseDir);
+      appLog(`已读取变更源文件: ${changedSourceFiles.length} 个`);
+
+      // 3. 读全量 Controller 源文件（供 LLM 判断接口定义与调用关系）
+      const controllerSourceFiles = this.collectControllerSourceFiles(sourcePath, baseDir);
+      appLog(`已读取 Controller 源文件: ${controllerSourceFiles.length} 个`);
+
+      // 4. 获取 Apifox 现有接口 OpenAPI 快照
+      let apifoxSnapshot: any = null;
+      if (projectId && apiKey) {
+        appLog('正在获取 Apifox 现有接口快照...');
+        apifoxSnapshot = await this.pipeline.syncer.getApifoxOpenApiJson(projectId, apiKey);
+        const pathCount = apifoxSnapshot?.paths ? Object.keys(apifoxSnapshot.paths).length : 0;
+        appLog(`Apifox 现有接口: ${pathCount} 个路径`);
+      }
+
+      // 5. 构建并写入 plan
+      const plan = createEmptySyncPlan(changedFiles, getGitDiff(sourcePath));
+      plan.changedSourceFiles = changedSourceFiles;
+      plan.controllerSourceFiles = controllerSourceFiles;
+      if (apifoxSnapshot) plan.apifoxSnapshot = apifoxSnapshot;
+
+      const jsonPath = writeSyncPlan(plan);
+      appLog(`\n📋 材料已收集（status: pending，待 LLM 分析）:`);
+      appLog(`  - ${jsonPath}`);
+      appLog(`  - ${path.join(baseDir, 'temp', 'apifox-sync-plan.md')}`);
+      appLog(`\n下一步：LLM 读 apifox-sync-plan.json，分析影响面后填写 syncApis，用户确认后 sync。`);
     } else {
       const doc = await this.pipeline.syncer.getOpenApiDoc(sourcePath);
       const apis = this.pipeline.syncer.extractApisFromDoc(doc);
-      appLog(`发现接口: ${apis.length}个\n接口详情:`);
+      appLog(`发现接口: ${apis.length}个`);
       apis.forEach((api) => appLog(`  ${api.method.toUpperCase()} ${api.path} - ${api.summary}`));
     }
 
-    appLog('=== 扫描完成 ===');
+    appLog('=== 收集完成 ===');
   }
 
-  private logDetectedApis(detectedApis: ApiInfo[], scanType: string | undefined): void {
-    const changedFiles = this.pipeline.scanner.getChangedFiles();
-    if (scanType === 'changed' && changedFiles.length > 0) {
-      appLog(`变更文件关联的 Controller 接口: ${detectedApis.length} 个`);
-      detectedApis.forEach((api) => appLog(`  ${api.method.toUpperCase()} ${api.path} (${api.controller})`));
-    } else if (scanType === 'all') {
-      appLog(`发现接口: ${detectedApis.length}个`);
-      detectedApis.forEach((api) => appLog(`  ${api.method.toUpperCase()} ${api.path} (${api.controller})`));
-    } else if (changedFiles.length === 0) {
-      appLog('无代码变更');
-    } else {
-      appLog('变更文件中无直接修改的 Controller，需由 LLM 分析间接影响');
+  /** 读取现有 plan.json，重新生成 plan.md（LLM 更新 syncApis 后调用） */
+  async refreshPlan(args: CliArgs): Promise<void> {
+    this.applyLogOptions(args);
+    const planPath = args['sync-plan'] || getDefaultPlanPath();
+    const plan = loadSyncPlan(planPath);
+    const mdPath = writeSyncPlan(plan, planPath);
+    appLog(`✅ plan.md 已刷新: ${path.join(process.cwd(), 'temp', 'apifox-sync-plan.md')}`);
+    appLog(`待同步接口: ${plan.syncApis.length} 个`);
+    plan.syncApis.forEach((api) => appLog(`  ${api.method.toUpperCase()} ${api.path}`));
+    if (plan.syncApis.length > 0 && !plan.userConfirmed) {
+      appLog('\n接口列表已就绪，等待用户确认后执行 sync。');
     }
+    void mdPath;
   }
 
   async workflow(args: CliArgs): Promise<void> {
@@ -297,12 +310,15 @@ export class ApifoxSyncApp {
         }
         formattedDoc = doc;
       } else if (confirmedPlan) {
-        this.pipeline.scanner.scopeToPlanChangedFiles(confirmedPlan.changedFiles);
+        this.pipeline.scanner.scopeToPlanChangedFiles(confirmedPlan.changedFiles, sourcePath, framework);
+        const detectedApis = await this.pipeline.scanCodeApis(sourcePath, framework);
         const doc = await this.pipeline.generateMultipleApisDoc(
           sourcePath,
           framework,
           syncApisToParam(confirmedPlan.syncApis),
           existingApis,
+          detectedApis,
+          confirmedPlan,
         );
         if (!doc) {
           appLog('同步计划中的接口在代码中未找到');
@@ -327,13 +343,7 @@ export class ApifoxSyncApp {
     if (args['save-doc'] === true) {
       this.pipeline.syncer.saveDocToFile(formattedDoc, 'formatted-api-doc.json');
     }
-    await this.performSync(
-      formattedDoc,
-      projectId,
-      apiKey,
-      syncMode,
-      targetBranch,
-    );
+    await this.performSync(formattedDoc, projectId, apiKey, syncMode, targetBranch);
   }
 
   private async performSync(

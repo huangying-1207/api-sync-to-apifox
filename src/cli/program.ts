@@ -44,6 +44,15 @@ export async function runCli(): Promise<void> {
     await app.sync(args);
   });
 
+  program
+    .command('refresh-plan')
+    .description('LLM 更新 syncApis 后重新生成 plan.md')
+    .allowUnknownOption()
+    .action(async (_opts, cmd) => {
+      const args = resolveCliArgs(cmd.opts(), argv);
+      await app.refreshPlan(args);
+    });
+
   addWorkflowOptions(
     program
       .command('workflow')

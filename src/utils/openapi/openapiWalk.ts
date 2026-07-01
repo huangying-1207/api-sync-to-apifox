@@ -1,8 +1,13 @@
 import { ApiInfo, DtoSchemaMap } from '../../types';
 import { getFolderNameFromOpenApiTags } from '../apifox/folderTags';
+import { isNoResponseBodyApi } from '../java/responseStatus';
 
 /** 从 Java 扫描结果（mapFields + DTO Schema）提取响应字段名 */
 export function extractResponseFieldNamesFromApi(api: ApiInfo, dtoSchemas: DtoSchemaMap = {}): string[] {
+  if (isNoResponseBodyApi(api)) {
+    return [];
+  }
+
   const fields: string[] = [];
 
   if (api.mapFields && Object.keys(api.mapFields).length > 0) {
@@ -114,9 +119,24 @@ function extractApiFromOperation(
     }
   }
 
-  if (methodDetails.responses?.['200']?.content) {
-    for (const contentType of Object.keys(methodDetails.responses['200'].content)) {
-      const schema = methodDetails.responses['200'].content[contentType].schema;
+  const successCodes = ['200', '201', '202', '204'];
+  for (const statusCode of successCodes) {
+    const response = methodDetails.responses?.[statusCode];
+    if (!response) continue;
+
+    api.responseStatusCode = statusCode;
+
+    const hasContent =
+      response.content && Object.keys(response.content).some((key) => response.content[key]?.schema);
+    if (!hasContent) {
+      api.returnType = 'void';
+      api.noResponseBody = true;
+      api.responseFields = [];
+      break;
+    }
+
+    for (const contentType of Object.keys(response.content)) {
+      const schema = response.content[contentType].schema;
       if (schema) {
         if (schema.$ref) {
           api.returnType = schema.$ref.split('/').pop();
@@ -131,6 +151,7 @@ function extractApiFromOperation(
         break;
       }
     }
+    break;
   }
 
   return api;

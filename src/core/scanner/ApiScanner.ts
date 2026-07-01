@@ -9,6 +9,8 @@ import { ApiInfo } from '../../types';
 import { ErrorHandler } from '../../utils/errorHandler';
 import { findGitRoot, getGitChangedFiles } from '../../utils/git';
 import { appLog, appWarn } from '../../utils/logger';
+import { dedupeApis } from '../../utils/openapi/apiKey';
+import { filePathKey, normalizeFilePath } from '../../utils/helper';
 import { FRAMEWORK_CONFIGS, isTestOrNonApiSourceFile } from './frameworks';
 import { springBootParser, findRequestMappingMethodEndpoints, extractPathsFromAnnotation } from './springbootParser';
 import { extractControllerFolderMeta } from '../../utils/java/controllerFolder';
@@ -59,7 +61,15 @@ export class ApiScanner {
     let files: string[];
     if (this.changedFiles.length > 0) {
       console.log('增量同步模式：只扫描变更的文件');
-      files = this.changedFiles.filter((file) => config.fileExts.some((ext) => file.endsWith(ext)));
+      if (framework === 'springboot') {
+        files = springBootParser.expandIncrementalControllerFiles(sourcePath, this.changedFiles);
+        const affectedCount = files.length;
+        if (affectedCount > 0) {
+          console.log(`增量扫描 Controller 文件：${affectedCount} 个（含 Service/DTO 间接影响）`);
+        }
+      } else {
+        files = this.changedFiles.filter((file) => config.fileExts.some((ext) => file.endsWith(ext)));
+      }
     } else {
       try {
         files = globSync(`${sourcePath}/${config.filePattern}`);
@@ -150,8 +160,13 @@ export class ApiScanner {
       }
     }
 
-    console.log(`✅ 扫描完成，发现 ${apis.length} 个接口`);
-    return apis;
+    const uniqueApis = dedupeApis(apis);
+    if (uniqueApis.length !== apis.length) {
+      appWarn(`扫描结果去重：${apis.length} → ${uniqueApis.length} 个接口`);
+    }
+
+    console.log(`✅ 扫描完成，发现 ${uniqueApis.length} 个接口`);
+    return uniqueApis;
   }
 
   async scanCodeForChanges(sourcePath: string, framework: string): Promise<ApiInfo[]> {
@@ -171,10 +186,27 @@ export class ApiScanner {
   }
 
   setChangedFiles(files: string[]): void {
-    this.changedFiles = files.map((file) => path.normalize(file)).filter((file) => !isTestOrNonApiSourceFile(file));
+    const seen = new Set<string>();
+    this.changedFiles = [];
+    for (const file of files) {
+      const normalized = normalizeFilePath(file);
+      if (isTestOrNonApiSourceFile(normalized)) continue;
+      const key = filePathKey(normalized);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      this.changedFiles.push(normalized);
+    }
   }
 
-  scopeToPlanChangedFiles(changedFiles: string[]): void {
+  scopeToPlanChangedFiles(changedFiles: string[], sourcePath?: string, framework?: string): void {
+    if (sourcePath && framework === 'springboot') {
+      const expanded = springBootParser.expandIncrementalControllerFiles(sourcePath, changedFiles);
+      if (expanded.length > 0) {
+        this.setChangedFiles(expanded);
+        return;
+      }
+    }
+
     const controllerFiles = changedFiles.filter(
       (file) => /Controller\.java$/i.test(file) || /Controller\.(js|ts)$/i.test(file),
     );

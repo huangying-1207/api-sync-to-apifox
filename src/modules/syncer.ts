@@ -29,6 +29,19 @@ class ApifoxSyncer {
     }
   }
 
+  async getApifoxOpenApiJson(projectId: string, apiKey: string, projectName?: string): Promise<any> {
+    const credentials = resolveApifoxCredentials(projectId, apiKey, projectName);
+    if (!credentials) return null;
+    try {
+      const doc = await apifoxClient.exportOpenApi(credentials.projectId, credentials.apiKey);
+      if (!doc || typeof doc === 'string') return null;
+      return doc;
+    } catch (error) {
+      ErrorHandler.handleNetworkError(error);
+      return null;
+    }
+  }
+
   async getApifoxExistingApis(
     projectId: string,
     apiKey: string,

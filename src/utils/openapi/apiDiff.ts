@@ -1,6 +1,7 @@
 import { diffParamNames } from './apiParamFilter';
 import { normalizePath } from '../helper';
 import { ApiInfo } from '../../types';
+import { isNoResponseBodyApi } from '../java/responseStatus';
 
 const JAVA_TO_OPENAPI_TYPE_MAP: Record<string, string> = {
   String: 'string',
@@ -71,6 +72,31 @@ function compareReturnType(detectedApi: ApiInfo, existingApi: ApiInfo, verbose: 
 
 function compareResponseFields(detectedApi: ApiInfo, existingApi: ApiInfo, verbose: boolean): string[] {
   const changes: string[] = [];
+
+  const detectedNoBody = isNoResponseBodyApi(detectedApi);
+  const existingNoBody = isNoResponseBodyApi(existingApi);
+
+  if (detectedNoBody && existingNoBody) {
+    return changes;
+  }
+
+  if (detectedNoBody && existingApi.responseFields?.length) {
+    if (verbose) {
+      changes.push('响应体: 无返回体（需清除旧的响应字段）');
+    } else {
+      changes.push('response body changed');
+    }
+    return changes;
+  }
+
+  if (existingNoBody && detectedApi.responseFields?.length) {
+    if (verbose) {
+      changes.push(`新增响应字段: ${detectedApi.responseFields.join(', ')}`);
+    } else {
+      changes.push('responseFields changed');
+    }
+    return changes;
+  }
 
   if (detectedApi.responseFields && existingApi.responseFields) {
     const detectedFieldSet = new Set(detectedApi.responseFields);

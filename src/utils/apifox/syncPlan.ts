@@ -6,6 +6,19 @@ import { formatBranchUserLabel } from './apifoxBranch';
 const DEFAULT_PLAN_PATH = path.join(process.cwd(), 'temp', 'apifox-sync-plan.json');
 const DEFAULT_PLAN_MD_PATH = path.join(process.cwd(), 'temp', 'apifox-sync-plan.md');
 
+function formatLocalTime(isoString: string): string {
+  return new Date(isoString).toLocaleString('zh-CN', { hour12: false });
+}
+
+function formatChangedFileForMarkdown(file: string): string {
+  const cwd = process.cwd();
+  const normalized = path.normalize(file);
+  if (normalized.startsWith(cwd)) {
+    return path.relative(cwd, normalized).replace(/\\/g, '/');
+  }
+  return path.basename(normalized);
+}
+
 export function getDefaultPlanPath(): string {
   return DEFAULT_PLAN_PATH;
 }
@@ -99,7 +112,7 @@ export function writeSyncPlanMarkdown(plan: SyncPlan, mdPath?: string): string {
     '',
     `> 状态: **${plan.status === 'confirmed' ? '已确认，可同步' : '待确认，不可同步'}**`,
     '',
-    `- 生成时间: ${plan.generatedAt}`,
+    `- 生成时间: ${formatLocalTime(plan.generatedAt)}`,
     `- 变更文件数: ${plan.changedFiles.length}`,
     `- 待同步接口数: ${plan.syncApis.length}`,
     '',
@@ -109,20 +122,20 @@ export function writeSyncPlanMarkdown(plan: SyncPlan, mdPath?: string): string {
     lines.push(`- 目标 Apifox 分支: ${formatBranchUserLabel(plan.targetBranch)}`, '');
   }
 
-  if (plan.analysis.summary) {
-    lines.push('## 分析摘要', '', plan.analysis.summary, '');
-  }
-
   if (plan.changedFiles.length > 0) {
     lines.push('## 变更文件', '');
     for (const file of plan.changedFiles) {
-      lines.push(`- ${file}`);
+      lines.push(`- ${formatChangedFileForMarkdown(file)}`);
     }
     lines.push('');
   }
 
+  if (plan.analysis.summary) {
+    lines.push('## 分析摘要', '', plan.analysis.summary, '');
+  }
+
   if (plan.analysis.affectedApis.length > 0) {
-    lines.push('## 确认受影响接口', '', '| 方法 | 路径 | 影响类型 | 变更说明 |', '|------|------|----------|----------|');
+    lines.push('## 受影响接口', '', '| 方法 | 路径 | 影响类型 | 变更说明 |', '|------|------|----------|----------|');
     for (const api of plan.analysis.affectedApis) {
       lines.push(
         `| ${api.method.toUpperCase()} | ${api.path} | ${api.impactType || '-'} | ${api.changeSummary || '-'} |`,
@@ -139,20 +152,27 @@ export function writeSyncPlanMarkdown(plan: SyncPlan, mdPath?: string): string {
     lines.push('');
   }
 
-  if (plan.scanCandidates && plan.scanCandidates.length > 0) {
-    lines.push('## 直接变更的 Controller 接口（候选）', '');
-    for (const api of plan.scanCandidates) {
-      lines.push(`- ${api.method.toUpperCase()} ${api.path} (${api.controllerClass || '-'})`);
-    }
-    lines.push('');
-  }
-
   if (plan.syncApis.length > 0) {
     lines.push('## 待同步接口', '');
     for (const api of plan.syncApis) {
       lines.push(`- ${api.method.toUpperCase()} ${api.path}`);
     }
     lines.push('');
+  } else if (plan.status !== 'confirmed') {
+    const alreadyAnalyzed = plan.analysis.summary.length > 0;
+    if (alreadyAnalyzed && plan.syncApis.length === 0) {
+      lines.push('## 结论', '', '经对比 Apifox 快照，**本次无需同步**，所有接口已与 Apifox 一致。', '');
+    } else {
+      lines.push(
+        '## 下一步',
+        '',
+        '1. LLM 读 `apifox-sync-plan.json`，根据 `changedSourceFiles`、`controllerSourceFiles`、`apifoxSnapshot` 分析影响面',
+        '2. 填写 `syncApis`（哪些接口需要同步）和 `analysis.affectedApis`（影响说明）',
+        '3. 如有 JSONObject 响应字段不明确，填写 `fieldSupplements`',
+        '4. 用户确认后执行 `sync`',
+        '',
+      );
+    }
   }
 
   lines.push(

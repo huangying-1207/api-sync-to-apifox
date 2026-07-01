@@ -34,9 +34,6 @@ apifox-full-api-doc.json
 src/mcp/.mcp-cache/
 src/mcp/.mcp-credentials/
 
-# Test files (if not needed to be committed)
-# testdata/
-
 # IDE configuration
 .idea/
 *.iml

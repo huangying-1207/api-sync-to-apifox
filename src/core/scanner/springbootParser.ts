@@ -12,6 +12,9 @@ import {
   findGenericPayloadFieldName,
   isWrapperReturnType,
 } from '../../utils/java/responseType';
+import { isVoidReturnType, resolveResponseEntityStatusCode } from '../../utils/java/responseStatus';
+import { filePathKey, normalizeFilePath } from '../../utils/helper';
+import { collectAffectedControllers, JavaProjectIndex, MapFieldSchema } from '../../utils/java/javaMethodIndex';
 import { isTestOrNonApiSourceFile } from './frameworks';
 
 const REQUEST_METHOD_TO_HTTP: Record<string, string> = {
@@ -149,6 +152,7 @@ export function findRequestMappingMethodEndpoints(content: string): RequestMappi
 /** Spring Boot Controller / DTO 解析逻辑 */
 export class SpringBootParser {
   private methodReturnTypes: Record<string, string[]> = {};
+  private projectIndex: JavaProjectIndex | null = null;
   extractPathFromAnnotation(raw: string): string {
     const paths = extractPathsFromAnnotation(raw);
     return paths[0] ?? '';
@@ -402,7 +406,17 @@ export class SpringBootParser {
     this.applyWrapperResponseInfo(api, methodContent, dtoSchemas);
   }
 
-  extractMapFields(methodContent: string): Record<string, { type: string; format?: string }> {
+  extractMapFields(methodContent: string, enclosingClassContent?: string): MapFieldSchema {
+    const localFields = this.extractPutFieldsFromBody(methodContent);
+    if (!enclosingClassContent || !this.projectIndex) {
+      return localFields;
+    }
+
+    const tracedFields = this.projectIndex.traceMapFields(methodContent, enclosingClassContent);
+    return { ...tracedFields, ...localFields };
+  }
+
+  private extractPutFieldsFromBody(methodContent: string): MapFieldSchema {
     const fields: Record<string, { type: string; format?: string }> = {};
     let cleanContent = methodContent.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
 
@@ -461,6 +475,33 @@ export class SpringBootParser {
     return [...scopedFiles];
   }
 
+  expandIncrementalControllerFiles(sourcePath: string, changedFiles: string[]): string[] {
+    if (!this.projectIndex) {
+      this.projectIndex = JavaProjectIndex.build(sourcePath);
+    }
+
+    const normalizedChanged = changedFiles
+      .filter((file) => file.endsWith('.java') && fs.existsSync(file))
+      .map((file) => path.normalize(file));
+
+    const directControllers = normalizedChanged.filter((file) => /Controller\.java$/i.test(file));
+    const affectedControllers = collectAffectedControllers(sourcePath, changedFiles, this.projectIndex);
+    const files = new Map<string, string>();
+    for (const file of [...directControllers, ...affectedControllers]) {
+      const canonical = normalizeFilePath(file);
+      const key = filePathKey(canonical);
+      if (!files.has(key)) {
+        files.set(key, canonical);
+      }
+    }
+
+    if (files.size > 0) {
+      return [...files.values()];
+    }
+
+    return normalizedChanged.filter((file) => /Controller\.java$/i.test(file));
+  }
+
   scanJavaClasses(
     sourcePath: string,
     scopedFiles: string[] | undefined,
@@ -469,6 +510,7 @@ export class SpringBootParser {
   ): Record<string, Record<string, string>> {
     const classSchemas: Record<string, Record<string, string>> = {};
     this.methodReturnTypes = {};
+    this.projectIndex = JavaProjectIndex.build(sourcePath);
 
     try {
       const allJavaFiles = globSync(sourcePath.replace(/\\/g, '/') + '/**/*.java');
@@ -554,15 +596,24 @@ export class SpringBootParser {
       api.javaMethodName = methodSignatureMatch[2];
       const returnType = methodSignatureMatch[1].trim();
 
-      if (returnType.includes('JSONObject') || returnType.includes('Map')) {
+      if (isVoidReturnType(returnType)) {
+        api.returnType = 'void';
+        api.noResponseBody = true;
+        const statusCode = resolveResponseEntityStatusCode(methodContent);
+        if (statusCode) {
+          api.responseStatusCode = statusCode;
+        }
+      } else if (returnType.includes('JSONObject') || returnType.includes('Map')) {
         api.returnType = 'JSONObject';
       } else {
         api.returnType = this.inferGenericTypes(returnType, methodContent, api);
       }
 
-      const mapFields = this.extractMapFields(methodContent);
+      const mapFields = this.extractMapFields(methodContent, content);
       if (Object.keys(mapFields).length > 0) {
         api.mapFields = mapFields;
+      } else if (api.returnType === 'JSONObject') {
+        api.needsLlmFieldSupplement = true;
       }
 
       this.applyWrapperResponseInfo(api, methodContent, dtoSchemas);

@@ -1,4 +1,4 @@
-import { buildApiMapKey } from '../utils/openapi/apiKey';
+import { buildApiMapKey, dedupeApis } from '../utils/openapi/apiKey';
 import { computeApiDiff } from '../utils/openapi/apiDiff';
 import { ApiComparisonResult, ApiInfo } from '../types';
 
@@ -17,8 +17,10 @@ class ApiComparer {
     console.log('正在比较接口变化...');
     this.scanResults = { added: [], updated: [], removed: [] };
 
+    const uniqueDetectedApis = dedupeApis(detectedApis);
+
     const detectedMap = new Map<string, ApiInfo>();
-    detectedApis.forEach((api) => {
+    uniqueDetectedApis.forEach((api) => {
       detectedMap.set(buildApiMapKey(api.method, api.path), api);
     });
 
@@ -27,14 +29,14 @@ class ApiComparer {
       existingMap.set(buildApiMapKey(api.method, api.path), api);
     });
 
-    detectedApis.forEach((api) => {
+    uniqueDetectedApis.forEach((api) => {
       const key = buildApiMapKey(api.method, api.path);
       if (!existingMap.has(key)) {
         this.scanResults.added.push(api);
       }
     });
 
-    const scannedControllers = new Set(detectedApis.map((api) => api.controller).filter(Boolean) as string[]);
+    const scannedControllers = new Set(uniqueDetectedApis.map((api) => api.controller).filter(Boolean) as string[]);
     existingApis.forEach((api) => {
       const key = buildApiMapKey(api.method, api.path);
       if (!detectedMap.has(key)) {
@@ -45,7 +47,7 @@ class ApiComparer {
       }
     });
 
-    detectedApis.forEach((api) => {
+    uniqueDetectedApis.forEach((api) => {
       const key = buildApiMapKey(api.method, api.path);
       const existingApi = existingMap.get(key);
       if (existingApi && computeApiDiff(api, existingApi).hasChanges) {

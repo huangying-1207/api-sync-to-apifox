@@ -32,11 +32,17 @@ description: >-
 
 ```
 - [ ] Step 0: 读取 .apifoxsync.json，确认 sync-tool-path 有效
-- [ ] Step 1: workflow / scan → 生成变更文档草稿
-- [ ] Step 2: LLM 分析 git diff → 填写 syncApis
-- [ ] Step 3: 展示文档 → 询问 Apifox 目标分支 → 等用户明确确认
-- [ ] Step 4: 更新计划为 confirmed（含 targetBranch）→ sync
+- [ ] Step 1: workflow / scan → 生成变更文档草稿（含 scanCandidates + llmContext）
+- [ ] Step 2: LLM 读 gitDiff + controllerCatalog → 补充间接影响 → 填写 syncApis
+- [ ] Step 3: 展示文档 → 可选校验 scanCandidates 完整性 → 询问分支 → 等用户确认
+- [ ] Step 4: LLM 按 codeReferences 填写 fieldSupplements（JSONObject 兜底）→ sync
 ```
+
+> **分工原则（按性价比）**
+> - **工具负责**：Git 变更、注解扫描 path/method、静态 Service 追踪、Apifox diff
+> - **Step 2 LLM 负责**：读 gitDiff 补充间接受影响但工具未纳入的 Controller/接口
+> - **Step 3 不建议换**：path/method 继续用注解扫描；LLM 仅做可选校验
+> - **Step 4 LLM 兜底**：JSONObject 且 mapFields 为空时，读 Service 代码片段补字段（须带 codeReferences）
 
 ## Step 1: workflow（推荐）或 scan
 
@@ -55,11 +61,18 @@ node $TOOL branches --json
 
 > scan 会强制将计划重置为 `pending`，作废旧确认。
 
-`scanCandidates` 仅含**直接修改的 Controller** 中的接口；DTO/Service/Entity 等变更需 LLM 读 `gitDiff` 分析间接影响。
+`scanCandidates` 仅含**直接修改的 Controller** 中的接口；DTO/Service/Entity 等变更需 LLM 读 `gitDiff` + `llmContext.step2.controllerCatalog` 分析间接影响。
 
-## Step 2: LLM 分析
+## Step 2: LLM 分析（补充间接影响）
 
-读取 `temp/apifox-sync-plan.json`，分析 `gitDiff` 和变更文件，更新：
+读取 `temp/apifox-sync-plan.json`，重点阅读：
+
+- `gitDiff`、`changedFiles`
+- `scanCandidates`（工具已扫到的直接变更接口）
+- `llmContext.step2.controllerCatalog`（全项目 Controller 目录，含 prefix/autowired/apis）
+- `llmContext.step2.instructions`
+
+更新：
 
 ```json
 {
@@ -72,11 +85,13 @@ node $TOOL branches --json
 }
 ```
 
-分析报告格式见下文「附录：分析报告格式」。
+**补充的遗漏** = `affectedApis` 中不在 `scanCandidates` 里的接口（间接受影响）。
 
 ## Step 3: 用户确认
 
-1. **查询分支**（展示给用户前执行）：
+1. **可选校验**（读 `llmContext.step3.instructions`）：对照 controllerCatalog 检查 scanCandidates 是否遗漏，若有遗漏回到 Step 2 补充。
+2. **path/method 以工具注解扫描为准**，不要用 LLM 改写接口路径。
+3. **查询分支**（展示给用户前执行）：
 
 ```bash
 node $TOOL branches --json
@@ -85,7 +100,24 @@ node $TOOL branches --json
 2. 向用户展示分支**名称**列表（不要展示 ID），询问同步到哪个分支，默认主分支。
 3. 展示 `temp/apifox-sync-plan.md`，**必须等用户明确回复「确认同步到 <分支名>」**。
 
-## Step 4: sync
+## Step 4: JSONObject 字段兜底 + sync
+
+若 `llmContext.step4.hints` 非空，LLM 须阅读其中的 `codeReferences`（Controller/Service 方法片段），
+**仅依据代码中的 `.put("field", ...)` 推断字段**，写入 `fieldSupplements`（每项须带 codeReferences）：
+
+```json
+{
+  "fieldSupplements": [{
+    "method": "GET",
+    "path": "/api/students/query/ext/{id}",
+    "mapFields": {
+      "studentId": { "type": "integer" },
+      "source": { "type": "string" }
+    },
+    "codeReferences": [{ "file": "src/.../StudentDataService.java", "startLine": 42, "endLine": 50, "field": "studentId" }]
+  }]
+}
+```
 
 用户确认后更新计划（`targetBranch` 的 `name` 用用户选择的分支名，`id` 从 `branches --json` 结果中匹配）：
 
@@ -168,8 +200,10 @@ node $TOOL sync --sync-mode incremental
 ### 数据流
 
 ```
-Git diff → changedFiles → scanCandidates → apifox-sync-plan.json
-         → LLM 填写 syncApis → 用户确认 → sync → Apifox
+Git diff → changedFiles → scanCandidates → llmContext（catalog + JSONObject hints）
+         → LLM Step2 补充间接影响 → syncApis
+         → LLM Step4 fieldSupplements（可选）
+         → 用户确认 → sync → Apifox
 ```
 
 ### 同步计划完整结构
@@ -181,6 +215,12 @@ Git diff → changedFiles → scanCandidates → apifox-sync-plan.json
   "changedFiles": [],
   "gitDiff": "...",
   "scanCandidates": [{ "method": "GET", "path": "/api/foo", "controllerClass": "FooController" }],
+  "llmContext": {
+    "step2": { "instructions": "...", "controllerCatalog": [] },
+    "step3": { "instructions": "..." },
+    "step4": { "instructions": "...", "hints": [] }
+  },
+  "fieldSupplements": [],
   "analysis": { "summary": "", "affectedApis": [], "excludedApis": [] },
   "syncApis": [],
   "userConfirmed": false
