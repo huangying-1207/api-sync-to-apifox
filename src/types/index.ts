@@ -68,8 +68,23 @@ export interface SyncPlanApi {
   path: string;
   controllerClass?: string;
   javaMethodName?: string;
-  impactType?: 'request_body' | 'response';
+  impactType?: string;
   changeSummary?: string;
+}
+
+/** 按变更源（Service/DTO/Controller 类）分组的影响分析 */
+export interface SyncPlanChangeSource {
+  sourceClass: string;
+  sourceFile?: string;
+  changeType?: string;
+  changeDetail?: string;
+  businessMeaning?: string;
+  /** 确认受影响接口（含直接变更与 Service 间接影响，统一放此数组） */
+  affectedApis?: SyncPlanApi[];
+  /** 兼容旧数据：渲染时合并入 affectedApis，不再单独展示 */
+  serviceIndirectApis?: SyncPlanApi[];
+  indirectApis?: SyncPlanApi[];
+  excludedApis?: SyncPlanExcludedApi[];
 }
 
 export interface SyncPlanExcludedApi {
@@ -108,6 +123,8 @@ export interface SyncPlan {
     summary: string;
     affectedApis: SyncPlanApi[];
     excludedApis?: SyncPlanExcludedApi[];
+    /** LLM 按变更源分组填写，每项 affectedApis 含直接与间接影响 */
+    changeSources?: SyncPlanChangeSource[];
   };
   syncApis: Array<{ method: string; path: string }>;
   userConfirmed: boolean;

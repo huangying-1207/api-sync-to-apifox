@@ -1,7 +1,8 @@
 import fs from 'fs';
 import path from 'path';
-import { SyncPlan } from '../../types';
+import { SyncPlan, SyncPlanApi } from '../../types';
 import { formatBranchUserLabel } from './apifoxBranch';
+import { collectAllAffectedApis, formatChangedFileLabel } from './planImpact';
 
 const DEFAULT_PLAN_PATH = path.join(process.cwd(), 'temp', 'apifox-sync-plan.json');
 const DEFAULT_PLAN_MD_PATH = path.join(process.cwd(), 'temp', 'apifox-sync-plan.md');
@@ -11,12 +12,21 @@ function formatLocalTime(isoString: string): string {
 }
 
 function formatChangedFileForMarkdown(file: string): string {
-  const cwd = process.cwd();
-  const normalized = path.normalize(file);
-  if (normalized.startsWith(cwd)) {
-    return path.relative(cwd, normalized).replace(/\\/g, '/');
+  return formatChangedFileLabel(file);
+}
+
+function renderAffectedApiTable(apis: SyncPlanApi[]): string[] {
+  if (apis.length === 0) return [];
+  const lines = [
+    '| 方法 | 路径 | 影响类型 | 变更说明 |',
+    '|------|------|----------|----------|',
+  ];
+  for (const api of apis) {
+    lines.push(
+      `| ${api.method.toUpperCase()} | ${api.path} | ${api.impactType || '-'} | ${api.changeSummary || '-'} |`,
+    );
   }
-  return path.basename(normalized);
+  return lines;
 }
 
 export function getDefaultPlanPath(): string {
@@ -134,14 +144,42 @@ export function writeSyncPlanMarkdown(plan: SyncPlan, mdPath?: string): string {
     lines.push('## 分析摘要', '', plan.analysis.summary, '');
   }
 
-  if (plan.analysis.affectedApis.length > 0) {
-    lines.push('## 受影响接口', '', '| 方法 | 路径 | 影响类型 | 变更说明 |', '|------|------|----------|----------|');
-    for (const api of plan.analysis.affectedApis) {
-      lines.push(
-        `| ${api.method.toUpperCase()} | ${api.path} | ${api.impactType || '-'} | ${api.changeSummary || '-'} |`,
-      );
+  const changeSources = plan.analysis.changeSources?.filter(
+    (source) =>
+      source.changeType ||
+      source.changeDetail ||
+      source.businessMeaning ||
+      (source.excludedApis && source.excludedApis.length > 0),
+  );
+
+  if (changeSources && changeSources.length > 0) {
+    lines.push('## 变更源分析', '');
+    for (const source of changeSources) {
+      lines.push(`### ${source.sourceClass}`, '');
+      if (source.changeType) {
+        lines.push(`**变更类型**: ${source.changeType}`, '');
+      }
+      if (source.changeDetail) {
+        lines.push('**变更详情**:', '```', source.changeDetail, '```', '');
+      }
+      if (source.businessMeaning) {
+        lines.push(`**业务含义**: ${source.businessMeaning}`, '');
+      }
+
+      if (source.excludedApis && source.excludedApis.length > 0) {
+        lines.push('#### 排除的接口', '', '| 方法 | 路径 | 排除原因 |', '|------|------|----------|');
+        for (const api of source.excludedApis) {
+          lines.push(`| ${api.method.toUpperCase()} | ${api.path} | ${api.reason} |`);
+        }
+        lines.push('');
+      }
     }
-    lines.push('');
+  }
+
+  const affectedApis = collectAllAffectedApis(plan);
+  if (affectedApis.length > 0) {
+    lines.push('## 确认受影响接口', '');
+    lines.push(...renderAffectedApiTable(affectedApis), '');
   }
 
   if (plan.analysis.excludedApis && plan.analysis.excludedApis.length > 0) {

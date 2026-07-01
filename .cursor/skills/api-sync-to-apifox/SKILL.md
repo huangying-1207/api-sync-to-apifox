@@ -7,7 +7,17 @@ description: >-
 
 # API 变更影响分析与 Apifox 同步
 
-**影响分析完全由 LLM 负责**，工具只做：Git 变更检测、Controller 扫描、变更文档生成、Apifox 同步。
+## 分工原则
+
+| 工具负责 | LLM 负责 |
+|---------|---------|
+| Git 变更检测 | 从代码识别受影响接口（path / method / 参数） |
+| 收集变更源码 + 全量 Controller 源码 | 判定影响面（含 Service/DTO 间接调用链） |
+| 获取 Apifox 现有接口快照 | 与 Apifox 快照对比，判断哪些需要更新 |
+| 写 plan.json / 生成 plan.md | 填写 `analysis`、`syncApis`、`fieldSupplements` |
+| 执行 sync（注解扫描 + 生成 OpenAPI + 推送） | 可选：为 JSONObject 响应补充字段定义 |
+
+> sync 时工具按 `syncApis` 中的 path/method 重新扫注解生成 OpenAPI schema，LLM 无需提供完整 schema，只需填 `syncApis`（加可选 `fieldSupplements`）。
 
 ## 路径约定（执行前必读）
 
@@ -32,17 +42,11 @@ description: >-
 
 ```
 - [ ] Step 0: 读取 .apifoxsync.json，确认 sync-tool-path 有效
-- [ ] Step 1: workflow / scan → 生成变更文档草稿（含 scanCandidates + llmContext）
-- [ ] Step 2: LLM 读 gitDiff + controllerCatalog → 补充间接影响 → 填写 syncApis
-- [ ] Step 3: 展示文档 → 可选校验 scanCandidates 完整性 → 询问分支 → 等用户确认
-- [ ] Step 4: LLM 按 codeReferences 填写 fieldSupplements（JSONObject 兜底）→ sync
+- [ ] Step 1: workflow / scan → 收集材料（变更源码 + Controller 源码 + Apifox 快照）
+- [ ] Step 2: LLM 读 plan.json → 识别受影响接口 → 填写 analysis / syncApis
+- [ ] Step 3: 展示 plan.md → 询问分支 → 等用户明确确认
+- [ ] Step 4（可选）: LLM 为 JSONObject 响应补充字段 → 填 fieldSupplements → sync
 ```
-
-> **分工原则（按性价比）**
-> - **工具负责**：Git 变更、注解扫描 path/method、静态 Service 追踪、Apifox diff
-> - **Step 2 LLM 负责**：读 gitDiff 补充间接受影响但工具未纳入的 Controller/接口
-> - **Step 3 不建议换**：path/method 继续用注解扫描；LLM 仅做可选校验
-> - **Step 4 LLM 兜底**：JSONObject 且 mapFields 为空时，读 Service 代码片段补字段（须带 codeReferences）
 
 ## Step 1: workflow（推荐）或 scan
 
@@ -61,49 +65,80 @@ node $TOOL branches --json
 
 > scan 会强制将计划重置为 `pending`，作废旧确认。
 
-`scanCandidates` 仅含**直接修改的 Controller** 中的接口；DTO/Service/Entity 等变更需 LLM 读 `gitDiff` + `llmContext.step2.controllerCatalog` 分析间接影响。
+scan 产出 `temp/apifox-sync-plan.json`，包含：
+- `changedFiles`：git 变更的文件路径列表
+- `gitDiff`：完整 git diff 文本
+- `changedSourceFiles`：变更的 Java 源文件完整内容（含 Controller / Service / DTO 等）
+- `controllerSourceFiles`：全量 Controller 源文件内容（供 LLM 识别接口定义与调用关系）
+- `apifoxSnapshot`：Apifox 现有接口的 OpenAPI JSON 快照
 
-## Step 2: LLM 分析（补充间接影响）
+## Step 2: LLM 分析
 
-读取 `temp/apifox-sync-plan.json`，重点阅读：
+读取 `temp/apifox-sync-plan.json`，按以下顺序逐步分析：
 
-- `gitDiff`、`changedFiles`
-- `scanCandidates`（工具已扫到的直接变更接口）
-- `llmContext.step2.controllerCatalog`（全项目 Controller 目录，含 prefix/autowired/apis）
-- `llmContext.step2.instructions`
+### 2-A 候选接口收集
 
-更新：
+1. **直接变更**：读 `changedSourceFiles` 中的 Controller 文件，列出路径 / 方法有变化的接口
+2. **间接影响**：读 `changedSourceFiles` 中的 Service / DTO 文件，对照 `controllerSourceFiles` 找出引用了这些类的 Controller 接口
+
+### 2-B 与 Apifox 快照逐一比对（核心步骤）
+
+对 2-A 收集的每个候选接口，在 `apifoxSnapshot.paths` 中找到对应的路径与方法，比较：
+
+| 比对维度 | 代码侧 | Apifox 侧 |
+|---------|--------|-----------|
+| 请求参数 | `controllerSourceFiles` 中的 `@RequestParam` / `@PathVariable` | `parameters` |
+| 请求体字段 | `@RequestBody` 对应 DTO 的字段列表 | `requestBody.content.*.schema` |
+| 响应体字段 | 返回类型对应的字段列表 | `responses.200.content.*.schema` |
+
+**判定规则：**
+
+- **有差异** → 纳入 `affectedApis`，`changeSummary` 写明具体差异（字段新增/删除/类型变化）
+- **完全一致** → 纳入 `excludedApis`，`reason` 写 `"与 Apifox 快照已一致，无需同步"`
+- **Apifox 无此接口** → 纳入 `affectedApis`，`impactType` 标 `"new_api"`
+
+> **`affectedApis` 只放代码与 Apifox 真正对不上的接口。** 代码虽然变了但 Apifox 已经是最新的，一律放 `excludedApis`。
+
+### 2-C 填写 plan
 
 ```json
 {
   "analysis": {
     "summary": "分析摘要",
-    "affectedApis": [{ "method": "POST", "path": "/api/...", "impactType": "response", "changeSummary": "..." }],
-    "excludedApis": [{ "method": "GET", "path": "/api/...", "reason": "仅注释变更，不影响接口" }]
+    "affectedApis": [
+      {
+        "method": "POST",
+        "path": "/api/...",
+        "impactType": "response",
+        "changeSummary": "新增字段 fieldA（string），Apifox 快照中缺失"
+      }
+    ],
+    "excludedApis": [
+      { "method": "GET", "path": "/api/...", "reason": "与 Apifox 快照已一致，无需同步" }
+    ]
   },
   "syncApis": [{ "method": "POST", "path": "/api/..." }]
 }
 ```
 
-**补充的遗漏** = `affectedApis` 中不在 `scanCandidates` 里的接口（间接受影响）。
+> 所有受影响接口（直接变更 + Service/DTO 间接影响）统一写入 `analysis.affectedApis`，不另设字段。
+
+填完后执行：
+
+```bash
+node $TOOL refresh-plan
+```
+
+重新生成 `plan.md`（`analysis` → `## 确认受影响接口` 表）。
 
 ## Step 3: 用户确认
 
-1. **可选校验**（读 `llmContext.step3.instructions`）：对照 controllerCatalog 检查 scanCandidates 是否遗漏，若有遗漏回到 Step 2 补充。
-2. **path/method 以工具注解扫描为准**，不要用 LLM 改写接口路径。
-3. **查询分支**（展示给用户前执行）：
-
-```bash
-node $TOOL branches --json
-```
-
-2. 向用户展示分支**名称**列表（不要展示 ID），询问同步到哪个分支，默认主分支。
-3. 展示 `temp/apifox-sync-plan.md`，**必须等用户明确回复「确认同步到 <分支名>」**。
+1. 向用户展示分支**名称**列表（不要展示 ID），询问同步到哪个分支，默认主分支。
+2. 展示 `temp/apifox-sync-plan.md`，**必须等用户明确回复「确认同步到 <分支名>」**。
 
 ## Step 4: JSONObject 字段兜底 + sync
 
-若 `llmContext.step4.hints` 非空，LLM 须阅读其中的 `codeReferences`（Controller/Service 方法片段），
-**仅依据代码中的 `.put("field", ...)` 推断字段**，写入 `fieldSupplements`（每项须带 codeReferences）：
+若接口响应为 `JSONObject` / `Map` 且字段不明确（工具无法从注解推断），LLM 读 Controller / Service 代码中的 `.put("field", ...)` 调用，填写 `fieldSupplements`：
 
 ```json
 {
@@ -113,13 +148,12 @@ node $TOOL branches --json
     "mapFields": {
       "studentId": { "type": "integer" },
       "source": { "type": "string" }
-    },
-    "codeReferences": [{ "file": "src/.../StudentDataService.java", "startLine": 42, "endLine": 50, "field": "studentId" }]
+    }
   }]
 }
 ```
 
-用户确认后更新计划（`targetBranch` 的 `name` 用用户选择的分支名，`id` 从 `branches --json` 结果中匹配）：
+用户确认后更新计划：
 
 ```json
 {
@@ -142,21 +176,18 @@ node $TOOL sync --sync-mode incremental
 ## 禁止
 
 - 不要在用户确认前执行 sync
-- 不要依赖静态依赖图分析影响（已移除）
 - 不要在 Skill 或 Git 中写死本机绝对路径
 
 ## 附录：分析报告格式
 
-> Step 2 分析后更新 `temp/apifox-sync-plan.json` 与 `temp/apifox-sync-plan.md`
+> Step 2 分析后更新 `temp/apifox-sync-plan.json`，执行 `refresh-plan` 生成 `temp/apifox-sync-plan.md`
 
 ### 分析概要
 
 - **分析时间**: {timestamp}
 - **变更文件数**: {changedFileCount}
-- **scan 候选接口数**: {scanCandidateCount}
-- **LLM 确认受影响接口数**: {confirmedCount}
+- **确认受影响接口数**: {confirmedCount}
 - **排除接口数**: {excludedCount}
-- **补充遗漏数**: {addedCount}
 
 ### 变更源分析
 
@@ -173,21 +204,19 @@ node $TOOL sync --sync-mode incremental
 
 ##### 确认受影响接口
 
-| 方法 | 路径 | 影响类型 | 影响字段 | 分析依据 |
-|------|------|----------|----------|----------|
-| GET | /api/xxx | response | fieldA, fieldB | DTO 含同名字段且通过 copyProperties 进入响应 |
+> 只列代码与 Apifox 快照**真正对不上**的接口。
+
+| 方法 | 路径 | 影响类型 | 变更说明 |
+|------|------|----------|---------|
+| GET | /api/xxx | response | 新增字段 fieldA（string），Apifox 快照缺失 |
+| POST | /api/zzz | request_body | DTO 新增必填字段 fieldC，Apifox 快照无此字段 |
 
 ##### 排除的接口
 
 | 方法 | 路径 | 排除原因 |
 |------|------|----------|
-| GET | /api/yyy | 仅日志注释变更，不影响接口契约 |
-
-##### 补充的遗漏
-
-| 方法 | 路径 | 影响类型 | 分析依据 |
-|------|------|----------|----------|
-| POST | /api/zzz | request_body | 直接修改了 RequestBody DTO 字段 |
+| GET | /api/yyy | 与 Apifox 快照已一致，无需同步 |
+| PUT | /api/aaa | 仅注释变更，接口契约未变 |
 
 ### 同步建议
 
@@ -200,13 +229,21 @@ node $TOOL sync --sync-mode incremental
 ### 数据流
 
 ```
-Git diff → changedFiles → scanCandidates → llmContext（catalog + JSONObject hints）
-         → LLM Step2 补充间接影响 → syncApis
-         → LLM Step4 fieldSupplements（可选）
-         → 用户确认 → sync → Apifox
+Git diff
+  → changedFiles / changedSourceFiles / controllerSourceFiles / apifoxSnapshot
+  → plan.json（pending）
+
+LLM
+  → 读 changedSourceFiles（识别接口变更、判定间接影响）
+  → 读 controllerSourceFiles（确认接口定义）
+  → 读 apifoxSnapshot（对比现有 schema）
+  → 填 analysis / syncApis / fieldSupplements（可选）
+
+refresh-plan → plan.md
+用户确认 → sync → Apifox
 ```
 
-### 同步计划完整结构
+### 同步计划结构
 
 ```json
 {
@@ -214,14 +251,20 @@ Git diff → changedFiles → scanCandidates → llmContext（catalog + JSONObje
   "status": "pending",
   "changedFiles": [],
   "gitDiff": "...",
-  "scanCandidates": [{ "method": "GET", "path": "/api/foo", "controllerClass": "FooController" }],
-  "llmContext": {
-    "step2": { "instructions": "...", "controllerCatalog": [] },
-    "step3": { "instructions": "..." },
-    "step4": { "instructions": "...", "hints": [] }
-  },
+  "changedSourceFiles": [{ "file": "src/.../UserController.java", "content": "..." }],
+  "controllerSourceFiles": [{ "file": "src/.../OrderController.java", "content": "..." }],
+  "apifoxSnapshot": { "openapi": "3.0.0", "paths": {} },
   "fieldSupplements": [],
-  "analysis": { "summary": "", "affectedApis": [], "excludedApis": [] },
+  "analysis": {
+    "summary": "",
+    "affectedApis": [],
+    "excludedApis": [],
+    "changeSources": [{
+      "sourceClass": "NoticeServiceImpl",
+      "changeType": "字段新增",
+      "affectedApis": [{ "method": "GET", "path": "/api/notices", "impactType": "response" }]
+    }]
+  },
   "syncApis": [],
   "userConfirmed": false
 }
@@ -233,6 +276,7 @@ Git diff → changedFiles → scanCandidates → llmContext（catalog + JSONObje
 node $TOOL workflow --project-name $PROJECT
 node $TOOL branches --json
 node $TOOL scan --scan-type changed
+node $TOOL refresh-plan
 node $TOOL sync --sync-mode incremental
 node $TOOL sync --sync-mode full
 node $TOOL sync --save-doc
