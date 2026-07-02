@@ -1,3 +1,16 @@
+/**
+ * 同步流水线编排
+ *
+ * 将 scanner / comparer / formatter / syncer 组合成一个有序的工作流：
+ *   scan → (LLM 分析) → format → sync
+ *
+ * 各模块职责：
+ *   ApiScanner   — 静态扫描 Java 源码，提取接口元数据与 DTO Schema
+ *   ApiFormatter — 将元数据转为 OpenAPI 文档，并补全中文字段说明
+ *   ApiComparer  — 对比本次扫描结果与 Apifox 现有接口，统计增删改
+ *   ApifoxSyncer — 调用 Apifox 开放 API 完成导入/导出
+ */
+
 import { ApiScanner } from './scanner/ApiScanner';
 import ApiComparer from '../modules/comparer';
 import ApiFormatter from '../modules/formatter';

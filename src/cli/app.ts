@@ -1,3 +1,18 @@
+/**
+ * CLI 业务编排入口
+ *
+ * ApifoxSyncApp 将各子命令的逻辑统一编排：
+ *
+ *   scan        — 收集 git 变更文件 + 全量 Controller 源码 + Apifox 快照，写入 pending 计划
+ *   refreshPlan — LLM 更新 plan.json 后重新渲染 plan.md
+ *   workflow    — scan + branches，一次性输出所有 LLM 需要的信息
+ *   sync        — 读取 confirmed 计划，生成 OpenAPI 文档并导入 Apifox
+ *   listBranches — 查询并展示项目分支列表
+ *
+ * sync 的接口来源优先级：
+ *   --apis 参数（多接口）> --api-path/--api-method（单接口）> confirmed plan > 全量扫描
+ */
+
 import fs from 'fs';
 import path from 'path';
 import { globSync } from 'glob';

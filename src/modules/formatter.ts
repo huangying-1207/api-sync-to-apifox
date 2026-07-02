@@ -1,3 +1,19 @@
+/**
+ * OpenAPI 文档格式化器
+ *
+ * 职责：
+ *   1. generateApiDocFromCode — 将 ApiInfo[] 转为原始 OpenAPI 3.0 文档（字段说明为英文占位符）
+ *   2. formatOpenApiDoc      — 遍历文档，将缺失或纯英文的字段说明替换为中文默认值
+ *   3. Java 类型 → OpenAPI Schema 转换（javaTypeToOpenApi、generateResponseSchema 等）
+ *
+ * 响应结构处理逻辑：
+ *   - 若接口标注为无响应体（void / 特殊状态码），跳过 schema 生成
+ *   - 若返回类型是泛型包装类（如 Result<T>、Response<T>），展开 wrapper 字段并填充 data 类型
+ *   - 否则用旧式 code/message/data 三字段兜底（兼容历史项目）
+ *
+ * maxSchemaDepth 防止 DTO 循环引用导致无限递归。
+ */
+
 import {
   containsChinese,
   getDefaultSummary,

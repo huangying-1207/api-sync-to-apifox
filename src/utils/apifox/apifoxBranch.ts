@@ -1,3 +1,12 @@
+/**
+ * Apifox 分支管理工具
+ *
+ * 分支解析优先级（resolveTargetBranch）：
+ *   CLI 参数（name > id）> sync plan 指定分支 > 配置文件指定 > 交互式提示 > 默认主分支
+ *
+ * 交互式提示仅在 TTY 环境下触发，CI / 非交互模式（--no-branch-prompt）跳过。
+ */
+
 import * as readline from 'readline';
 import { ApifoxBranch, SyncPlan } from '../../types';
 import {

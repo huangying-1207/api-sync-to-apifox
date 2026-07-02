@@ -1,3 +1,14 @@
+/**
+ * 同步计划影响接口的收集与去重工具
+ *
+ * collectAllAffectedApis 负责将 LLM 写入的多路影响来源合并为单一列表：
+ *   - plan.analysis.affectedApis      — LLM 直接标记的受影响接口
+ *   - source.affectedApis             — 各变更源（ChangeSource）下的直接影响接口
+ *   - source.indirectApis             — 各变更源下的间接影响接口（旧字段兼容）
+ *
+ * 去重以 "METHOD:path" 为 key，后出现的重复条目直接丢弃（保留先出现的描述）。
+ */
+
 import path from 'path';
 import { SyncPlan, SyncPlanApi, SyncPlanChangeSource } from '../../types';
 import { buildApiMapKey } from '../openapi/apiKey';

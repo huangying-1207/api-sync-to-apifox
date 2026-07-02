@@ -1,3 +1,13 @@
+/**
+ * Apifox 同步器
+ *
+ * 负责与 Apifox 开放 API 交互的所有网络操作：
+ *   - 连接验证（用 export-openapi 做探针）
+ *   - 获取项目现有接口快照（export-openapi）
+ *   - 将格式化后的 OpenAPI 文档导入 Apifox（import-openapi）
+ *   - 本地/远程 OpenAPI 文档获取与解析
+ */
+
 import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
@@ -11,6 +21,12 @@ import { appLog } from '../utils/logger';
 import { ApiInfo } from '../types';
 
 class ApifoxSyncer {
+  /**
+   * 验证 Apifox 凭据是否可用。
+   *
+   * 用 exportOpenApi 做探针（官方稳定接口），取代原先未收录的 /info 端点。
+   * 凭据解析失败（如未配置）时直接返回 true，不阻塞流程。
+   */
   async validateApifoxConnection(projectId: string, apiKey: string, projectName?: string): Promise<boolean> {
     const credentials = resolveApifoxCredentials(projectId, apiKey, projectName);
     if (!credentials) {
@@ -20,7 +36,7 @@ class ApifoxSyncer {
 
     console.log('正在验证 Apifox 连接...');
     try {
-      await apifoxClient.getProjectInfo(credentials.projectId, credentials.apiKey);
+      await apifoxClient.exportOpenApi(credentials.projectId, credentials.apiKey);
       console.log('✅ Apifox 连接验证成功');
       return true;
     } catch (error) {
@@ -29,6 +45,11 @@ class ApifoxSyncer {
     }
   }
 
+  /**
+   * 获取 Apifox 项目的原始 OpenAPI JSON 文档。
+   * 主要用于 scan 阶段生成 apifoxSnapshot，供 LLM 比对。
+   * 返回 null 表示获取失败或凭据未配置，调用方应降级处理。
+   */
   async getApifoxOpenApiJson(projectId: string, apiKey: string, projectName?: string): Promise<any> {
     const credentials = resolveApifoxCredentials(projectId, apiKey, projectName);
     if (!credentials) return null;
@@ -42,6 +63,10 @@ class ApifoxSyncer {
     }
   }
 
+  /**
+   * 获取 Apifox 项目现有接口列表，用于 sync 阶段目录继承。
+   * withFolders=true 时 tags 中包含目录层级，用于推断 folderName。
+   */
   async getApifoxExistingApis(
     projectId: string,
     apiKey: string,
@@ -69,6 +94,13 @@ class ApifoxSyncer {
     }
   }
 
+  /**
+   * 将格式化后的 OpenAPI 文档导入 Apifox。
+   *
+   * 固定使用 OVERWRITE_EXISTING 策略，不删除 Apifox 中多余的接口
+   * （deleteUnmatchedResources: false），确保增量同步安全。
+   * targetBranchId 由调用方传入；不传则写入主分支（main）。
+   */
   async syncToApifox(
     doc: any,
     projectId: string,
@@ -121,6 +153,7 @@ class ApifoxSyncer {
     }
   }
 
+  /** 将文档对象保存为 JSON 文件到 temp/ 目录（调试用）。 */
   saveDocToFile(doc: any, filename: string): void {
     const dir = ensureTempDir();
     const filePath = path.join(dir, filename);
@@ -128,6 +161,11 @@ class ApifoxSyncer {
     appLog(`文档已保存到: ${filePath}`);
   }
 
+  /**
+   * 获取并解析 OpenAPI 文档，支持本地文件路径和远程 URL。
+   * 本地路径以 ./、../、/ 开头；否则视为 HTTP(S) URL。
+   * 同时支持 JSON 和 YAML 格式。
+   */
   async getOpenApiDoc(url: string): Promise<any> {
     console.log(`正在获取 OpenAPI 文档: ${url}`);
 

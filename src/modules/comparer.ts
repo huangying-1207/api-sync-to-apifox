@@ -1,3 +1,13 @@
+/**
+ * 接口变化比较器
+ *
+ * 对比本次扫描结果（detectedApis）与 Apifox 现有接口（existingApis），
+ * 产出三类变更集合：added / updated / removed。
+ *
+ * 增量模式（incremental=true）：removed 判定仅在本次扫描覆盖的 Controller 范围内生效，
+ * 避免未扫描到的 Controller 接口被误判为"已删除"。
+ */
+
 import { buildApiMapKey, dedupeApis } from '../utils/openapi/apiKey';
 import { computeApiDiff } from '../utils/openapi/apiDiff';
 import { ApiComparisonResult, ApiInfo } from '../types';

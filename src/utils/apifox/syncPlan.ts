@@ -1,3 +1,15 @@
+/**
+ * 同步计划（SyncPlan）的读写与 Markdown 渲染
+ *
+ * SyncPlan 是本工具的核心数据结构，贯穿整个工作流：
+ *   scan    → 创建 pending 计划，写入原始材料（gitDiff / changedSourceFiles / apifoxSnapshot）
+ *   LLM 分析 → 填写 analysis（summary / affectedApis / changeSources）和 syncApis
+ *   用户确认 → 将 status 改为 confirmed、userConfirmed 改为 true
+ *   sync    → 读取 confirmed 计划，执行接口同步
+ *
+ * writeSyncPlan 同时写 .json（机器读）和 .md（人工审阅），保持两者同步。
+ */
+
 import fs from 'fs';
 import path from 'path';
 import { SyncPlan, SyncPlanApi } from '../../types';

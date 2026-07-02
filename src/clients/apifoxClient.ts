@@ -1,3 +1,17 @@
+/**
+ * Apifox 开放 API 客户端
+ *
+ * 仅封装 Apifox 官方文档已收录的稳定接口：
+ *   POST /v1/projects/{id}/export-openapi  — 导出 OpenAPI 文档
+ *   POST /v1/projects/{id}/import-openapi  — 导入 OpenAPI 文档
+ *   GET  /v1/projects/{id}/documents       — 文档列表（非核心，仅 MCP 展示用）
+ *   GET  /v1/projects/{id}/environments    — 环境列表（非核心，仅 MCP 展示用）
+ *   GET  /v1/projects/{id}/variables       — 变量列表（非核心，仅 MCP 展示用）
+ *
+ * ⚠️  历史遗留的 GET /v1/projects/{id}/info 在 Apifox 开放 API 文档中未收录，
+ *     已删除，改由 exportOpenApi 代替做连接探针。
+ */
+
 import axios from 'axios';
 import { APIFOX_API_BASE_URL } from '../config';
 import { ErrorHandler } from '../utils/errorHandler';
@@ -21,16 +35,12 @@ export class ApifoxClient {
     };
   }
 
-  async getProjectInfo(projectId: string, apiKey: string): Promise<any> {
-    const response = await retryRequest(() =>
-      axios.get(`${this.baseUrl}/v1/projects/${projectId}/info`, {
-        headers: this.headers(apiKey),
-        timeout: REQUEST_TIMEOUT,
-      }),
-    );
-    return response.data;
-  }
-
+  /**
+   * 导出项目全量 OpenAPI 文档（JSON 格式，OAS 3.1）。
+   *
+   * 也用作连接探针：能正常返回则说明 projectId + apiKey 有效。
+   * addFoldersToTags 为 true 时，接口目录会体现在 tags 字段，用于同步时继承 Apifox 目录结构。
+   */
   async exportOpenApi(
     projectId: string,
     apiKey: string,
@@ -57,6 +67,10 @@ export class ApifoxClient {
     return response.data;
   }
 
+  /**
+   * 导入 OpenAPI 文档到 Apifox 项目。
+   * importOptions 由调用方组装（覆盖策略、目标分支 ID 等），此处透传。
+   */
   async importOpenApi(
     projectId: string,
     apiKey: string,
@@ -79,6 +93,7 @@ export class ApifoxClient {
     return response.data;
   }
 
+  /** 获取项目文档列表（用于 MCP 展示，非同步核心路径）。 */
   async getDocuments(projectId: string, apiKey: string): Promise<any[]> {
     try {
       const response = await retryRequest(() =>
@@ -97,6 +112,7 @@ export class ApifoxClient {
     }
   }
 
+  /** 获取项目环境列表（用于 MCP 展示，非同步核心路径）。 */
   async getEnvironments(projectId: string, apiKey: string): Promise<any[]> {
     try {
       const response = await retryRequest(() =>
@@ -115,6 +131,7 @@ export class ApifoxClient {
     }
   }
 
+  /** 获取项目变量列表（用于 MCP 展示，非同步核心路径）。 */
   async getVariables(projectId: string, apiKey: string): Promise<any[]> {
     try {
       const response = await retryRequest(() =>
