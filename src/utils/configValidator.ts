@@ -96,6 +96,15 @@ export class ConfigValidator {
       });
     }
 
+    if (config['git-compare-mode'] && !['head', 'worktree'].includes(config['git-compare-mode'])) {
+      errors.push({
+        type: 'invalid_value',
+        field: 'git-compare-mode',
+        value: config['git-compare-mode'],
+        message: '无效的 Git 对比模式，支持 head 或 worktree',
+      });
+    }
+
     // 验证源路径格式（支持 URL 或本地文件路径）
     if (config['source-type'] === 'swagger' && config['source-path']) {
       const p = config['source-path'];

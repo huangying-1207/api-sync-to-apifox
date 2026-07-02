@@ -59,15 +59,28 @@ node $TOOL workflow --project-name $PROJECT
 或分步：
 
 ```bash
+# 方式 A：对比工作区未提交改动（默认）
 node $TOOL scan --scan-type changed
+
+# 方式 B：对比指定远程分支（适合 feature 分支对主干的影响分析）
+node $TOOL scan --scan-type changed --git-base-branch origin/main --git-fetch
+
+# 方式 C：工作区（含未提交）相对远程分支
+node $TOOL scan --scan-type changed --git-base-branch origin/main --git-compare-mode worktree --git-fetch
+
 node $TOOL branches --json
 ```
+
+> `--git-base-branch` 指定 Git 对比基准（如 `origin/main`、`origin/develop`）。  
+> `--git-fetch` 对比前先 fetch 远程，确保基准分支最新。  
+> `--git-compare-mode head`（默认）对比当前分支相对基准的**提交差异**；`worktree` 则包含**未提交改动**。
 
 > scan 会强制将计划重置为 `pending`，作废旧确认。
 
 scan 产出 `temp/apifox-sync-plan.json`，包含：
-- `changedFiles`：git 变更的文件路径列表
+- `changedFiles`：相对基准分支或工作区的变更文件路径列表
 - `gitDiff`：完整 git diff 文本
+- `gitBaseBranch` / `gitCompareMode`：使用分支对比时记录对比基准
 - `changedSourceFiles`：变更的 Java 源文件完整内容（含 Controller / Service / DTO 等）
 - `controllerSourceFiles`：全量 Controller 源文件内容（供 LLM 识别接口定义与调用关系）
 - `apifoxSnapshot`：Apifox 现有接口的 OpenAPI JSON 快照

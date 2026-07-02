@@ -39,7 +39,7 @@ import {
   resolveTargetBranch,
 } from '../utils/apifox/apifoxBranch';
 import { ApiInfo, ApifoxBranch, CliArgs, OpenApiDocument, SourceFile, SyncPlan } from '../types';
-import { getGitDiff } from '../utils/git';
+import { getGitDiff, getGitDiffComparedTo, GitCompareMode } from '../utils/git';
 import { appLog, appWarn, isJsonMode, setLogOptions } from '../utils/logger';
 
 function branchLabel(branch: ApifoxBranch): string {
@@ -153,9 +153,19 @@ export class ApifoxSyncApp {
         appLog('⚠️  检测到已确认的同步计划，本次 scan 将作废旧确认，需重新分析并确认');
       }
 
-      // 1. 检测 git 变更文件
+      // 1. 检测 git 变更文件（工作区 status 或相对基准分支 diff）
+      const gitBaseBranch = args['git-base-branch']?.trim();
+      const gitCompareMode = (args['git-compare-mode'] || 'head') as GitCompareMode;
       if (scanType === 'changed') {
-        await this.pipeline.scanner.detectCodeChanges(sourcePath);
+        if (gitBaseBranch) {
+          await this.pipeline.scanner.detectCodeChanges(sourcePath, {
+            baseRef: gitBaseBranch,
+            fetch: args['git-fetch'] === true,
+            mode: gitCompareMode,
+          });
+        } else {
+          await this.pipeline.scanner.detectCodeChanges(sourcePath);
+        }
       }
       const changedFiles = this.pipeline.scanner.getChangedFiles();
       appLog(`变更文件: ${changedFiles.length} 个`);
@@ -178,7 +188,18 @@ export class ApifoxSyncApp {
       }
 
       // 5. 构建并写入 plan
-      const plan = createEmptySyncPlan(changedFiles, getGitDiff(sourcePath));
+      const gitDiff = gitBaseBranch
+        ? getGitDiffComparedTo(sourcePath, {
+            baseRef: gitBaseBranch,
+            fetch: args['git-fetch'] === true,
+            mode: gitCompareMode,
+          })
+        : getGitDiff(sourcePath);
+      const plan = createEmptySyncPlan(changedFiles, gitDiff);
+      if (gitBaseBranch) {
+        plan.gitBaseBranch = gitBaseBranch;
+        plan.gitCompareMode = gitCompareMode;
+      }
       plan.changedSourceFiles = changedSourceFiles;
       plan.controllerSourceFiles = controllerSourceFiles;
       if (apifoxSnapshot) plan.apifoxSnapshot = apifoxSnapshot;

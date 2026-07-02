@@ -113,6 +113,10 @@ export interface SyncPlan {
   generatedAt: string;
   changedFiles: string[];
   gitDiff?: string;
+  /** 对比基准 Git 引用（如 origin/main），未设置时表示使用工作区 git status */
+  gitBaseBranch?: string;
+  /** head=分支提交差异，worktree=含未提交改动 */
+  gitCompareMode?: 'head' | 'worktree';
   /** 变更的源文件（含 Controller/Service/DTO 等所有 .java 变更文件），LLM 判断影响面的主要材料 */
   changedSourceFiles?: SourceFile[];
   /** 全量 Controller 源文件，LLM 读接口定义与调用关系 */
@@ -143,6 +147,10 @@ export interface Config {
   framework?: 'springboot' | 'nodejs' | 'django';
   'sync-mode'?: 'incremental' | 'full';
   'scan-type'?: 'all' | 'changed';
+  /** 对比基准 Git 分支/引用，如 origin/main */
+  'git-base-branch'?: string;
+  /** 分支对比模式：head（默认）或 worktree */
+  'git-compare-mode'?: 'head' | 'worktree';
   'trigger-mode'?: 'auto' | 'manual';
   'api-path'?: string;
   'api-method'?: string;
@@ -161,6 +169,7 @@ export interface CliArgs extends Partial<Config> {
   help?: boolean;
   'refresh-branches'?: boolean;
   'no-branch-prompt'?: boolean;
+  'git-fetch'?: boolean;
   'save-doc'?: boolean;
 }
 

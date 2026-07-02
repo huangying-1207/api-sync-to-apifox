@@ -140,6 +140,11 @@ export function writeSyncPlanMarkdown(plan: SyncPlan, mdPath?: string): string {
     '',
   ];
 
+  if (plan.gitBaseBranch) {
+    const modeLabel = plan.gitCompareMode === 'worktree' ? '工作区含未提交' : '分支提交差异';
+    lines.push(`- Git 对比基准: \`${plan.gitBaseBranch}\`（${modeLabel}）`, '');
+  }
+
   if (plan.targetBranch) {
     lines.push(`- 目标 Apifox 分支: ${formatBranchUserLabel(plan.targetBranch)}`, '');
   }

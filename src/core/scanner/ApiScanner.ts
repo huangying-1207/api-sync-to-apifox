@@ -7,7 +7,7 @@ import path from 'path';
 import { sync as globSync } from 'glob';
 import { ApiInfo } from '../../types';
 import { ErrorHandler } from '../../utils/errorHandler';
-import { findGitRoot, getGitChangedFiles } from '../../utils/git';
+import { findGitRoot, getGitChangedFiles, getGitChangedFilesComparedTo, GitCompareOptions } from '../../utils/git';
 import { appLog, appWarn } from '../../utils/logger';
 import { dedupeApis } from '../../utils/openapi/apiKey';
 import { filePathKey, normalizeFilePath } from '../../utils/helper';
@@ -25,13 +25,30 @@ export class ApiScanner {
     return findGitRoot(sourcePath);
   }
 
-  async detectCodeChanges(sourcePath: string): Promise<string[]> {
-    appLog('正在检测代码变更...');
+  async detectCodeChanges(
+    sourcePath: string,
+    compareOptions?: GitCompareOptions,
+  ): Promise<string[]> {
+    const filter = (absolutePath: string) =>
+      Boolean(absolutePath.match(/\.(java|js|py)$/) && !isTestOrNonApiSourceFile(absolutePath));
 
+    if (compareOptions?.baseRef) {
+      appLog(`正在对比 Git 基准分支: ${compareOptions.baseRef}（模式: ${compareOptions.mode || 'head'}）`);
+      try {
+        const modifiedFiles = getGitChangedFilesComparedTo(sourcePath, compareOptions, filter);
+        appLog(`相对 ${compareOptions.baseRef} 检测到 ${modifiedFiles.length} 个文件有变更`);
+        this.changedFiles = modifiedFiles;
+        return modifiedFiles;
+      } catch (error) {
+        appWarn(`Git 分支对比失败: ${(error as Error).message}`);
+        this.changedFiles = [];
+        return [];
+      }
+    }
+
+    appLog('正在检测工作区代码变更（git status）...');
     try {
-      const modifiedFiles = getGitChangedFiles(sourcePath, (absolutePath) =>
-        Boolean(absolutePath.match(/\.(java|js|py)$/) && !isTestOrNonApiSourceFile(absolutePath)),
-      );
+      const modifiedFiles = getGitChangedFiles(sourcePath, filter);
       appLog(`检测到 ${modifiedFiles.length} 个文件有变更`);
       this.changedFiles = modifiedFiles;
       return modifiedFiles;

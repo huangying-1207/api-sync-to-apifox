@@ -11,6 +11,9 @@ export function addWorkflowOptions(cmd: Command): Command {
     .option('--source-path <path>', '代码目录或 Swagger 地址')
     .option('--framework <name>', '框架：springboot / nodejs / django')
     .option('--scan-type <type>', '扫描类型：all 或 changed')
+    .option('--git-base-branch <ref>', 'Git 对比基准分支/引用，如 origin/main')
+    .option('--git-compare-mode <mode>', '分支对比模式：head（分支提交差异）或 worktree（含未提交改动）')
+    .option('--git-fetch', '对比前先 fetch 远程（配合 origin/xxx 使用）')
     .option('--sync-mode <mode>', '同步模式：incremental 或 full')
     .option('--trigger-mode <mode>', '触发模式：auto 或 manual')
     .option('--api-method <method>', '单独同步：HTTP 方法')
@@ -48,6 +51,8 @@ export function commanderOptsToCliArgs(opts: Record<string, unknown>): CliArgs {
     ['source-path', 'sourcePath'],
     ['framework', 'framework'],
     ['scan-type', 'scanType'],
+    ['git-base-branch', 'gitBaseBranch'],
+    ['git-compare-mode', 'gitCompareMode'],
     ['sync-mode', 'syncMode'],
     ['trigger-mode', 'triggerMode'],
     ['api-method', 'apiMethod'],
@@ -66,6 +71,7 @@ export function commanderOptsToCliArgs(opts: Record<string, unknown>): CliArgs {
   }
 
   if (opts.refreshBranches === true) args['refresh-branches'] = true;
+  if (opts.gitFetch === true) args['git-fetch'] = true;
   if (opts.branchPrompt === false) args['no-branch-prompt'] = true;
   if (opts.saveDoc === true) args['save-doc'] = true;
   if (opts.quiet === true) args.quiet = true;

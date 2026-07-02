@@ -14,7 +14,7 @@ export function findGitRoot(dir: string): string {
   return dir;
 }
 
-/** 在指定目录执行 git 命令 */
+/** 在指定目录执行 git 命令（非 0 退出码时抛错） */
 export function runGit(args: string[], cwd: string): string {
   const result = spawnSync('git', args, {
     cwd,
@@ -22,7 +22,97 @@ export function runGit(args: string[], cwd: string): string {
     maxBuffer: 10 * 1024 * 1024,
   });
   if (result.error) throw result.error;
-  return `${result.stdout || ''}${result.stderr || ''}`.trim();
+  if (result.status !== 0) {
+    throw new Error(`git ${args.join(' ')} 失败: ${(result.stderr || result.stdout || '未知错误').trim()}`);
+  }
+  return (result.stdout || '').trim();
+}
+
+export type GitCompareMode = 'head' | 'worktree';
+
+export interface GitCompareOptions {
+  /** 基准引用，如 origin/main、main、v1.0.0 */
+  baseRef: string;
+  /** 对比前是否 fetch 远程（仅当 baseRef 含 remote 名时有效，如 origin/main） */
+  fetch?: boolean;
+  /**
+   * head：当前分支相对基准的提交差异（baseRef...HEAD，适合 feature 分支对比主干）
+   * worktree：工作区相对基准的差异（含未提交改动）
+   */
+  mode?: GitCompareMode;
+}
+
+/** 可选 fetch 远程，确保基准分支引用最新 */
+export function fetchGitRef(projectRoot: string, baseRef: string): void {
+  const slashIndex = baseRef.indexOf('/');
+  if (slashIndex <= 0) return;
+  const remote = baseRef.slice(0, slashIndex);
+  runGit(['fetch', remote], projectRoot);
+}
+
+function buildGitDiffArgs(options: GitCompareOptions): string[] {
+  const { baseRef, mode = 'head' } = options;
+  if (mode === 'worktree') {
+    return ['diff', '--name-only', baseRef];
+  }
+  return ['diff', '--name-only', `${baseRef}...HEAD`];
+}
+
+function buildGitDiffTextArgs(options: GitCompareOptions): string[] {
+  const { baseRef, mode = 'head' } = options;
+  if (mode === 'worktree') {
+    return ['diff', baseRef];
+  }
+  return ['diff', `${baseRef}...HEAD`];
+}
+
+/** 解析变更文件列表（绝对路径），支持相对基准分支对比 */
+export function getGitChangedFilesComparedTo(
+  sourcePath: string,
+  options: GitCompareOptions,
+  filter: (absolutePath: string) => boolean,
+): string[] {
+  const projectRoot = findGitRoot(sourcePath);
+
+  if (options.fetch) {
+    try {
+      fetchGitRef(projectRoot, options.baseRef);
+    } catch (error) {
+      throw new Error(`拉取远程分支失败: ${(error as Error).message}`);
+    }
+  }
+
+  runGit(['rev-parse', '--verify', options.baseRef], projectRoot);
+
+  const nameOnlyOutput = runGit(buildGitDiffArgs(options), projectRoot);
+  if (!nameOnlyOutput) return [];
+
+  const modifiedFiles = new Set<string>();
+  for (const relativePath of nameOnlyOutput.split('\n').filter((line) => line.trim())) {
+    const absolutePath = path.normalize(path.join(projectRoot, relativePath));
+    for (const file of expandGitChangedPath(absolutePath, filter)) {
+      modifiedFiles.add(file);
+    }
+  }
+  return [...modifiedFiles];
+}
+
+/** 获取相对基准分支的 git diff 文本 */
+export function getGitDiffComparedTo(sourcePath: string, options: GitCompareOptions): string {
+  try {
+    const projectRoot = findGitRoot(sourcePath);
+    if (options.fetch) {
+      try {
+        fetchGitRef(projectRoot, options.baseRef);
+      } catch {
+        // fetch 失败时继续尝试本地已有引用
+      }
+    }
+    runGit(['rev-parse', '--verify', options.baseRef], projectRoot);
+    return runGit(buildGitDiffTextArgs(options), projectRoot);
+  } catch {
+    return '';
+  }
 }
 
 /** 将 git status 条目展开为具体文件（目录会递归展开） */
